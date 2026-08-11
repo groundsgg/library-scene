@@ -43,7 +43,12 @@ data class LongConstraints(val minInclusive: Long?, val maxInclusive: Long?) : P
 data class DecimalConstraints(val minInclusive: BigDecimal?, val maxInclusive: BigDecimal?) : ParameterConstraints {
     init { require(minInclusive == null || maxInclusive == null || minInclusive <= maxInclusive) }
 }
-data class EnumConstraints(val options: Set<LocalId>) : ParameterConstraints {
+@ConsistentCopyVisibility
+data class EnumConstraints private constructor(
+    val options: Set<LocalId>,
+    @Suppress("unused") private val canonical: Unit,
+) : ParameterConstraints {
+    constructor(options: Set<LocalId>) : this(immutableSetCopy(options), Unit)
     init { require(options.isNotEmpty()) }
 }
 data class AssetConstraints(val expectedKind: AssetKind) : ParameterConstraints

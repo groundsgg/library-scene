@@ -50,9 +50,18 @@ internal object CatalogValidator {
         }
         action.arguments.forEach { (id, value) ->
             val parameter = definition.parameters[id]
-            if (parameter == null || !argumentMatches(value, parameter.type, parameter.constraints) ||
-                (value is AssetArgument && parameter.constraints is AssetConstraints && assets.assets[value.value]?.kind != parameter.constraints.expectedKind)
-            ) problems += problem("$path/arguments/${id.value}", SceneProblemCode.INVALID_ACTION_ARGUMENT, id.value, "Action argument is invalid.")
+            val argumentPath = "$path/arguments/${id.value}"
+            if (parameter == null || !argumentMatches(value, parameter.type, parameter.constraints)) {
+                problems += problem(argumentPath, SceneProblemCode.INVALID_ACTION_ARGUMENT, id.value, "Action argument is invalid.")
+            }
+            if (value is AssetArgument) {
+                val asset = assets.assets[value.value]
+                if (asset == null) {
+                    problems += problem(argumentPath, SceneProblemCode.UNKNOWN_ASSET, value.value.value, "Asset does not exist in the catalog.")
+                } else if (parameter?.constraints is AssetConstraints && asset.kind != parameter.constraints.expectedKind) {
+                    problems += problem(argumentPath, SceneProblemCode.INVALID_ACTION_ARGUMENT, id.value, "Action argument is invalid.")
+                }
+            }
         }
         definition.parameters.values.filter { it.required && it.defaultValue == null && it.id !in action.arguments }.forEach { parameter ->
             problems += problem("$path/arguments/${parameter.id.value}", SceneProblemCode.INVALID_ACTION_ARGUMENT, parameter.id.value, "Required action argument is missing.")

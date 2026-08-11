@@ -27,7 +27,10 @@ internal object IntrinsicValidator {
                     if (element.parts.isEmpty() || element.parts.size > MAX_PARTS) add(limit("$path/parts", element.id.value))
                     duplicates(element.parts.map { it.id }, "$path/parts", SceneProblemCode.DUPLICATE_PART_ID, this)
                 }
-                is Npc -> element.bindings.forEachIndexed { index, binding -> validateBinding(binding, "$path/bindings/$index", element, elements, this) }
+                is Npc -> {
+                    if (element.bindings.size > MAX_BINDINGS) add(limit("$path/bindings", element.id.value))
+                    element.bindings.forEachIndexed { index, binding -> validateBinding(binding, "$path/bindings/$index", element, elements, this) }
+                }
                 is Prop -> Unit
             }
         }

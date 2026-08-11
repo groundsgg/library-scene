@@ -35,6 +35,29 @@ class CatalogValidationTest {
         assertEquals(true, result.problems.any { it.code == LIMIT_EXCEEDED })
     }
 
+    @Test
+    fun `asset arguments without a kind constraint still require catalog assets`() {
+        val action = ApplicationAction(ActionKey("grounds:asset"), mapOf(LocalId("asset") to AssetArgument(AssetKey("grounds:missing"))))
+        val catalog = ActionCatalog(CatalogId("grounds:actions"), "1", mapOf(
+            ActionKey("grounds:asset") to ActionDefinition(ActionKey("grounds:asset"), "Asset", "", mapOf(
+                LocalId("asset") to ActionParameter(LocalId("asset"), ActionParameterType.ASSET, true, null, NoConstraints),
+            )),
+        ))
+
+        val result = SceneValidation.validateCatalogs(sceneFixture(actions = listOf(action)), assetCatalog(), catalog)
+        assertEquals(listOf(UNKNOWN_ASSET), result.problems.filter { it.path.endsWith("arguments/asset") }.map(SceneProblem::code))
+    }
+
+    @Test
+    fun `enum options snapshot source and exposed values`() {
+        val source = linkedSetOf(LocalId("one"), LocalId("two"))
+        val constraints = EnumConstraints(source)
+        source.clear()
+
+        assertEquals(setOf(LocalId("one"), LocalId("two")), constraints.options)
+        assertFailsWith<UnsupportedOperationException> { (constraints.options as MutableSet<LocalId>).clear() }
+    }
+
     private fun sceneFixture(actions: List<SceneAction> = listOf(
         StartAnimationAction(ElementTarget(LocalId("prop"), null), LocalId("missing")),
         PlaySoundAction(AssetKey("grounds:missing-sound"), 1.0, 1.0),

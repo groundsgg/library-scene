@@ -44,8 +44,28 @@ class IntrinsicValidationTest {
             ),
         )
 
-        assertEquals(4, result.problems.count { it.code == LIMIT_EXCEEDED })
+        assertEquals(5, result.problems.count { it.code == LIMIT_EXCEEDED })
         assertEquals(true, result.problems.any { it.code == MISSING_GROUP && it.path == "elements/later/group" })
+    }
+
+    @Test
+    fun `binding limit accepts 128 and reports one problem at 129`() {
+        val atLimit = SceneValidation.validateIntrinsic(scene(elements = listOf(npc(bindings = (1..128).map { binding(SceneTrigger.LEFT_CLICK) }))))
+        val oneOver = SceneValidation.validateIntrinsic(scene(elements = listOf(npc(bindings = (1..129).map { binding(SceneTrigger.LEFT_CLICK) }))))
+
+        assertEquals(emptyList(), atLimit.problems.filter { it.path == "elements/npc/bindings" })
+        assertEquals(listOf(LIMIT_EXCEEDED), oneOver.problems.filter { it.path == "elements/npc/bindings" }.map(SceneProblem::code))
+    }
+
+    @Test
+    fun `intrinsic validation deduplicates identical missing group diagnostics`() {
+        val result = SceneValidation.validateIntrinsic(scene(elements = listOf(
+            Prop(LocalId("duplicate"), LocalId("missing"), transform(), asset = AssetKey("grounds:prop"), initialAnimation = null),
+            Prop(LocalId("duplicate"), LocalId("missing"), transform(), asset = AssetKey("grounds:prop"), initialAnimation = null),
+        )))
+
+        assertEquals(1, result.problems.count { it.code == MISSING_GROUP && it.path == "elements/duplicate/group" })
+        assertEquals(result.problems.sortedWith(SceneProblem.ORDERING), result.problems)
     }
 
     private fun scene(groups: List<SceneGroup> = emptyList(), elements: List<SceneElement>): SceneDocument = SceneDocument(
