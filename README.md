@@ -5,6 +5,7 @@
 ```kotlin
 dependencies {
     implementation("gg.grounds:scene-format:0.1.0")
+    // Tests only; never an application runtime dependency.
     testImplementation("gg.grounds:scene-testkit:0.1.0")
 }
 ```
@@ -13,7 +14,7 @@ dependencies {
 
 ## Loading, validation, and canonical saves
 
-There is zero or one scene file per configured scene location: a missing file means “no scene”; one file is decoded strictly; more than one candidate is a caller configuration error. Keep the decision about where a scene is stored in the host application—this library does not scan, select, or write platform paths.
+There is literally zero or one `scene.json` per map: a missing `scene.json` means “no scene”; one file is decoded strictly; more than one candidate is a caller configuration error. Keep the decision about where a scene is stored in the host application—this library does not scan, select, or write platform paths.
 
 ```kotlin
 import gg.grounds.scene.format.SceneDecodeResult
@@ -28,7 +29,8 @@ fun loadAndCanonicalize(
     assetCatalog: gg.grounds.scene.format.AssetCatalog,
     actionCatalog: gg.grounds.scene.format.ActionCatalog,
 ) {
-    if (!Files.exists(scenePath)) return // zero files: no scene
+    require(scenePath.fileName.toString() == "scene.json")
+    if (!Files.exists(scenePath)) return // zero scene.json files: no scene
 
     val decoded = SceneJson.decode(Files.readAllBytes(scenePath))
     val scene = (decoded as? SceneDecodeResult.Success)?.scene
@@ -47,19 +49,24 @@ Catalog pins are exact: `SceneDocument.catalogs.assets` must match the supplied 
 Paper owns file discovery and platform event translation. It decodes and validates a single file at startup/reload, maps Bukkit events to the neutral `SceneTrigger`, `SceneHand`, and `SceneGameMode` values, then executes the resulting `SceneAction` values in its own adapter.
 
 ```kotlin
-// Paper plugin service: no Bukkit value crosses the format boundary.
-val scene = loadScene(scenePath, paperAssetCatalog, paperActionCatalog)
-when (trigger) {
-    gg.grounds.scene.format.SceneTrigger.RIGHT_CLICK -> executePaperActions(scene)
-    else -> Unit
-}
+fun loadPaperScene(
+    scenePath: Path,
+    assetCatalog: gg.grounds.scene.format.AssetCatalog,
+    actionCatalog: gg.grounds.scene.format.ActionCatalog,
+) = loadAndCanonicalize(scenePath, assetCatalog, actionCatalog)
 ```
 
 service-maps owns catalog construction and resource-pack compatibility. It supplies the pinned `AssetCatalog` and `ActionCatalog`, calls `SceneValidation.validateCatalogs`, and hands the validated domain scene to the owning runtime; it does not need a renderer or a server API dependency.
 
 ```kotlin
-val result = SceneValidation.validateCatalogs(scene, serviceMapsAssets, serviceMapsActions)
-check(result.isValid) { result.problems.joinToString("\n") }
+fun validateServiceMapsScene(
+    scene: gg.grounds.scene.format.SceneDocument,
+    assetCatalog: gg.grounds.scene.format.AssetCatalog,
+    actionCatalog: gg.grounds.scene.format.ActionCatalog,
+) {
+    val result = SceneValidation.validateCatalogs(scene, assetCatalog, actionCatalog)
+    check(result.isValid) { result.problems.joinToString("\n") }
+}
 ```
 
 Minestom support is deliberately later. There is no `scene-minestom` artifact in `0.1.0`; a future adapter follows the same neutral-domain flow without changing scene JSON.

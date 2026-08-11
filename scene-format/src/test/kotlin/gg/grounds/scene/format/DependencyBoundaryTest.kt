@@ -1,10 +1,7 @@
 package gg.grounds.scene.format
 
-import java.nio.file.Files
 import java.nio.file.Path
 import java.util.jar.JarFile
-import kotlin.io.path.extension
-import kotlin.io.path.name
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -12,39 +9,33 @@ import kotlin.test.assertTrue
 class DependencyBoundaryTest {
     @Test
     fun `format runtime classpath contains no platform testkit or test framework dependency`() {
-        val classpath =
-            System.getProperty("sceneFormatRuntimeClasspath")
-                .split(System.getProperty("path.separator"))
+        val components = System.getProperty("sceneFormatRuntimeComponents").split("|")
         val forbidden =
             listOf(
-                "bukkit",
-                "paper",
-                "minestom",
-                "quarkus",
-                "scene-testkit",
-                "junit",
+                "org.bukkit:",
+                "io.papermc:",
+                "net.minestom:",
+                "io.quarkus:",
+                "gg.grounds:scene-testkit:",
+                "org.junit",
                 "kotlin-test",
+                "resource-pack",
+                "service-maps",
             )
 
         forbidden.forEach { marker ->
             assertFalse(
-                classpath.any { it.lowercase().contains(marker) },
-                "format runtime contains $marker: $classpath",
+                components.any { it.lowercase().contains(marker) },
+                "format runtime contains $marker: $components",
             )
         }
-        assertTrue(classpath.any { it.contains("adventure-api") })
-        assertTrue(classpath.any { it.contains("jackson") })
+        assertTrue(components.any { it.contains("adventure-api") })
+        assertTrue(components.any { it.contains("jackson") })
     }
 
     @Test
     fun `format production jar contains no platform testkit or test implementation classes`() {
-        val jar =
-            Files.list(Path.of("build/libs")).use { paths ->
-                paths
-                    .filter { it.extension == "jar" && !it.name.endsWith("-sources.jar") }
-                    .findFirst()
-                    .orElseThrow()
-            }
+        val jar = Path.of(System.getProperty("sceneFormatJar"))
         JarFile(jar.toFile()).use { archive ->
             val entries = archive.entries().asSequence().map { it.name }.toList()
             listOf(

@@ -10,7 +10,18 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     dependsOn(tasks.named("jar"))
-    systemProperty("sceneFormatRuntimeClasspath", configurations.runtimeClasspath.get().asPath)
+    systemProperty(
+        "sceneFormatRuntimeComponents",
+        configurations.runtimeClasspath.get().resolvedConfiguration.resolvedArtifacts.joinToString(
+            "|"
+        ) {
+            "${it.moduleVersion.id.group}:${it.name}:${it.moduleVersion.id.version}"
+        },
+    )
+    systemProperty(
+        "sceneFormatJar",
+        tasks.named<Jar>("jar").get().archiveFile.get().asFile.absolutePath,
+    )
 }
 
 configurations.configureEach {
