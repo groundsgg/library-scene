@@ -30,6 +30,7 @@ class JvmPublicSurfaceJavaTest {
         assertApprovedPublicMethods(
                 SceneFixtures.class,
                 Set.of(signature("minimal", SceneDocument.class), signature("complete", SceneDocument.class)));
+        assertNoPublicFields(assertions);
         assertOnlyFixtureSingletonField(SceneFixtures.class);
         assertArtifactHasNoProhibitedReferences(assertions);
         assertArtifactHasNoProhibitedReferences(SceneFixtures.class);
@@ -42,11 +43,17 @@ class JvmPublicSurfaceJavaTest {
                 () -> assertApprovedPublicMethods(UnexpectedPublicHelper.class, Set.of()));
     }
 
+    @Test
+    void approvedSurfaceCheckRejectsASyntheticPublicHelper() {
+        assertThrows(
+                AssertionError.class,
+                () -> assertApprovedPublicMethods(SyntheticPublicSurfaceFixture.class, Set.of()));
+    }
+
     private void assertApprovedPublicMethods(Class<?> type, Set<MethodSignature> allowed) {
         Set<MethodSignature> actual =
                 Arrays.stream(type.getDeclaredMethods())
                         .filter(method -> Modifier.isPublic(method.getModifiers()))
-                        .filter(method -> !method.isSynthetic() && !method.isBridge())
                         .map(this::signature)
                         .collect(java.util.stream.Collectors.toUnmodifiableSet());
         assertEquals(allowed, actual, "Unexpected public methods on " + type.getName());
@@ -57,12 +64,19 @@ class JvmPublicSurfaceJavaTest {
         List<Field> publicFields =
                 Arrays.stream(type.getDeclaredFields())
                         .filter(field -> Modifier.isPublic(field.getModifiers()))
-                        .filter(field -> !field.isSynthetic())
                         .toList();
         assertEquals(1, publicFields.size());
         Field singleton = publicFields.getFirst();
         assertEquals("INSTANCE", singleton.getName());
         assertEquals(SceneFixtures.class, singleton.getType());
+    }
+
+    private void assertNoPublicFields(Class<?> type) {
+        long publicFieldCount =
+                Arrays.stream(type.getDeclaredFields())
+                        .filter(field -> Modifier.isPublic(field.getModifiers()))
+                        .count();
+        assertEquals(0, publicFieldCount, "Unexpected public fields on " + type.getName());
     }
 
     private void assertArtifactHasNoProhibitedReferences(Class<?> type) throws IOException {
