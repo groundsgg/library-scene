@@ -30,6 +30,25 @@ class SceneJsonEncodeTest {
 
         assertEquals(listOf(SceneProblemCode.DUPLICATE_ELEMENT_ID), result.problems.map { it.code })
     }
+
+    @Test
+    fun `canonical strings preserve isolated surrogates and valid supplementary pairs`() {
+        val base = assertIs<SceneDecodeResult.Success>(SceneJson.decode(validJson().encodeToByteArray())).scene
+        val source = "high\uD800 low\uDC00 pair\uD83D\uDE00"
+        val scene = SceneDocument(
+            base.schemaVersion, base.id,
+            SceneMetadata(source, base.metadata.description, base.metadata.tags),
+            base.catalogs, base.groups, base.elements,
+        )
+
+        val bytes = assertIs<SceneEncodeResult.Success>(SceneJson.encode(scene)).bytes
+        val text = bytes.decodeToString()
+        val decoded = assertIs<SceneDecodeResult.Success>(SceneJson.decode(bytes)).scene
+
+        assertTrue("\"name\": \"high\\uD800 low\\uDC00 pair😀\"" in text)
+        assertFalse('\uFFFD' in text)
+        assertEquals(source, decoded.metadata.name)
+    }
 }
 
 internal fun expectedPropScene() = """

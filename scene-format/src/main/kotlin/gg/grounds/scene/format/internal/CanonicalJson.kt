@@ -81,7 +81,34 @@ internal object CanonicalJson {
         private fun array(values: List<*>, depth: Int, compact: Boolean) { append('['); values.forEachIndexed { index, item -> if (index > 0) append(','); spacing(depth + 1, compact); value(item, depth + 1, compact) }; if (values.isNotEmpty()) spacing(depth, compact); append(']') }
         private fun node(node: JsonNode, depth: Int, compact: Boolean) = when { node.isObject -> obj(depth, compact, node.properties().sortedWith(compareBy(CODE_POINT_ORDER) { it.key }).map { it.key to it.value }); node.isArray -> array(node.toList(), depth, compact); node.isString -> string(node.stringValue()); node.isBoolean -> append(node.booleanValue()); node.isNumber -> append(decimal(node.decimalValue())); node.isNull -> append("null"); else -> error("Unsupported JSON node") }
         private fun spacing(depth: Int, compact: Boolean) { if (!compact) { append('\n'); repeat(depth) { append("  ") } } }
-        private fun string(value: String) { append('"'); value.forEach { char -> when (char) { '"' -> append("\\\""); '\\' -> append("\\\\"); '\b' -> append("\\b"); '\u000c' -> append("\\f"); '\n' -> append("\\n"); '\r' -> append("\\r"); '\t' -> append("\\t"); else -> if (char.code < 0x20) append("\\u%04x".format(java.util.Locale.ROOT, char.code)) else append(char) } }; append('"') }
+        private fun string(value: String) {
+            append('"')
+            var index = 0
+            while (index < value.length) {
+                val char = value[index]
+                when (char) {
+                    '"' -> append("\\\"")
+                    '\\' -> append("\\\\")
+                    '\b' -> append("\\b")
+                    '\u000c' -> append("\\f")
+                    '\n' -> append("\\n")
+                    '\r' -> append("\\r")
+                    '\t' -> append("\\t")
+                    else -> when {
+                        char.isHighSurrogate() && index + 1 < value.length && value[index + 1].isLowSurrogate() -> {
+                            append(char)
+                            append(value[++index])
+                        }
+                        char.isHighSurrogate() || char.isLowSurrogate() || char.code < 0x20 -> unicodeEscape(char)
+                        else -> append(char)
+                    }
+                }
+                index++
+            }
+            append('"')
+        }
+
+        private fun unicodeEscape(char: Char) = append("\\u${char.code.toString(16).uppercase(java.util.Locale.ROOT).padStart(4, '0')}")
     }
 
     private fun decimal(value: BigDecimal): String = if (value.signum() == 0) "0" else value.stripTrailingZeros().toPlainString()
