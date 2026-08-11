@@ -3,8 +3,14 @@ dependencies {
     implementation("net.kyori:adventure-text-serializer-gson:4.21.0")
     implementation("tools.jackson.core:jackson-databind:3.1.5")
     implementation("tools.jackson.module:jackson-module-kotlin:3.1.5")
+    testImplementation(project(":scene-testkit"))
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+}
+
+tasks.withType<Test>().configureEach {
+    dependsOn(tasks.named("jar"))
+    systemProperty("sceneFormatRuntimeClasspath", configurations.runtimeClasspath.get().asPath)
 }
 
 configurations.configureEach {

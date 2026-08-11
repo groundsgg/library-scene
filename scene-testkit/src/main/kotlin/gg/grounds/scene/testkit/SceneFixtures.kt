@@ -31,13 +31,6 @@ object SceneFixtures {
             catalogReferences(),
             listOf(SceneGroup(LocalId("actors"), "Actors")),
             listOf(
-                Prop(
-                    LocalId("prop"),
-                    null,
-                    transform(),
-                    asset = AssetKey("test:prop"),
-                    initialAnimation = LocalId("idle"),
-                ),
                 CompositeProp(
                     LocalId("composite"),
                     null,
@@ -58,6 +51,13 @@ object SceneFixtures {
                     interactionBounds = bounds(),
                     proximity = null,
                     bindings = emptyList(),
+                ),
+                Prop(
+                    LocalId("prop"),
+                    null,
+                    transform(),
+                    asset = AssetKey("test:prop"),
+                    initialAnimation = LocalId("idle"),
                 ),
                 Npc(
                     LocalId("tracked"),
@@ -90,10 +90,10 @@ object SceneFixtures {
         TriggerBinding(
             SceneTrigger.RIGHT_CLICK,
             listOf(
-                HandCondition(SceneHand.MAIN),
-                SneakingCondition(false),
-                PermissionCondition("scene.use"),
                 GameModeCondition(SceneGameMode.ADVENTURE),
+                HandCondition(SceneHand.MAIN),
+                PermissionCondition("scene.use"),
+                SneakingCondition(false),
             ),
             100,
             10,
@@ -121,13 +121,13 @@ object SceneFixtures {
                 ),
                 ApplicationAction(
                     ActionKey("test:application"),
-                    mapOf(
-                        LocalId("string") to StringArgument("value"),
-                        LocalId("long") to LongArgument(42),
-                        LocalId("decimal") to DecimalArgument(BigDecimal("12.50")),
-                        LocalId("boolean") to BooleanArgument(true),
-                        LocalId("enum") to EnumArgument(LocalId("choice")),
+                    linkedMapOf(
                         LocalId("asset") to AssetArgument(AssetKey("test:asset")),
+                        LocalId("boolean") to BooleanArgument(true),
+                        LocalId("decimal") to DecimalArgument(BigDecimal("12.5")),
+                        LocalId("enum") to EnumArgument(LocalId("choice")),
+                        LocalId("long") to LongArgument(42),
+                        LocalId("string") to StringArgument("value"),
                     ),
                 ),
             ),
