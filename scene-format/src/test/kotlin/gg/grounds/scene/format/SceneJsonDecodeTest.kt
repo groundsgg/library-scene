@@ -261,6 +261,223 @@ class SceneJsonDecodeTest {
     }
 
     @Test
+    fun `domain identifier and version invariants retain their exact wire pointer`() {
+        val applicationPath = "/elements/3/bindings/0/actions/9"
+        listOf(
+                Triple(
+                    validJson().replace("\"id\":\"test:scene\"", "\"id\":\"Test:scene\""),
+                    SceneProblemCode.INVALID_IDENTIFIER,
+                    "/id",
+                ),
+                Triple(
+                    validJson().replace("\"id\":\"test:assets\"", "\"id\":\"Test:assets\""),
+                    SceneProblemCode.INVALID_IDENTIFIER,
+                    "/catalogs/assets/id",
+                ),
+                Triple(
+                    validJson()
+                        .replace(
+                            "\"id\":\"test:assets\",\"version\":\"1\"",
+                            "\"id\":\"test:assets\",\"version\":\"bad version\"",
+                        ),
+                    SceneProblemCode.INVALID_IDENTIFIER,
+                    "/catalogs/assets/version",
+                ),
+                Triple(
+                    completeJson().replace("\"id\": \"actors\"", "\"id\": \"bad/id\""),
+                    SceneProblemCode.INVALID_IDENTIFIER,
+                    "/groups/0/id",
+                ),
+                Triple(
+                    validJson().replace("\"id\":\"prop\"", "\"id\":\"bad/id\""),
+                    SceneProblemCode.INVALID_IDENTIFIER,
+                    "/elements/0/id",
+                ),
+                Triple(
+                    completeJson().replaceFirst("\"group\":\"actors\"", "\"group\":\"bad/id\""),
+                    SceneProblemCode.INVALID_IDENTIFIER,
+                    "/elements/2/group",
+                ),
+                Triple(
+                    validJson().replace("\"asset\":\"test:prop\"", "\"asset\":\"Test:prop\""),
+                    SceneProblemCode.INVALID_IDENTIFIER,
+                    "/elements/0/asset",
+                ),
+                Triple(
+                    completeJson()
+                        .replace("\"key\":\"test:application\"", "\"key\":\"Test:application\""),
+                    SceneProblemCode.INVALID_IDENTIFIER,
+                    "$applicationPath/key",
+                ),
+                Triple(
+                    completeJson()
+                        .replaceFirst(
+                            "\"target\":{\"element\":\"prop\"",
+                            "\"target\":{\"element\":\"bad/id\"",
+                        ),
+                    SceneProblemCode.INVALID_IDENTIFIER,
+                    "/elements/3/bindings/0/actions/0/target/element",
+                ),
+                Triple(
+                    completeJson()
+                        .replace(
+                            "\"enum\":{\"type\":\"enum\",\"value\":\"choice\"}",
+                            "\"bad/id\":{\"type\":\"enum\",\"value\":\"choice\"}",
+                        ),
+                    SceneProblemCode.INVALID_IDENTIFIER,
+                    "$applicationPath/arguments/bad~1id",
+                ),
+                Triple(
+                    completeJson().replace("\"value\":\"choice\"", "\"value\":\"bad/id\""),
+                    SceneProblemCode.INVALID_IDENTIFIER,
+                    "$applicationPath/arguments/enum/value",
+                ),
+                Triple(
+                    completeJson().replace("\"value\":\"test:asset\"", "\"value\":\"Test:asset\""),
+                    SceneProblemCode.INVALID_IDENTIFIER,
+                    "$applicationPath/arguments/asset/value",
+                ),
+            )
+            .forEach { (json, code, path) -> assertFailure(json, code, path) }
+    }
+
+    @Test
+    fun `domain geometry interaction and action invariants retain their exact wire pointer`() {
+        val bindingPath = "/elements/0/bindings/0"
+        val actionPath = "/elements/3/bindings/0/actions"
+        listOf(
+                Triple(
+                    validJson().replaceFirst("\"x\":0.0", "\"x\":1e400"),
+                    SceneProblemCode.NON_FINITE_TRANSFORM,
+                    "/elements/0/transform/position/x",
+                ),
+                Triple(
+                    validJson().replace("\"yaw\":0.0", "\"yaw\":1e400"),
+                    SceneProblemCode.NON_FINITE_TRANSFORM,
+                    "/elements/0/transform/rotation/yaw",
+                ),
+                Triple(
+                    validJson().replace("\"scale\":{\"x\":1.0", "\"scale\":{\"x\":0.0"),
+                    SceneProblemCode.INVALID_SCALE,
+                    "/elements/0/transform/scale/x",
+                ),
+                Triple(
+                    npcScene().replace("\"size\":{\"x\":1.0", "\"size\":{\"x\":0.0"),
+                    SceneProblemCode.INVALID_BOUNDS,
+                    "/elements/0/interactionBounds/size/x",
+                ),
+                Triple(
+                    completeJson().replace("\"maxDistance\":12.0", "\"maxDistance\":0.0"),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "/elements/3/look/maxDistance",
+                ),
+                Triple(
+                    completeJson()
+                        .replace(
+                            "\"maxTurnDegreesPerSecond\":90.0",
+                            "\"maxTurnDegreesPerSecond\":0.0",
+                        ),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "/elements/3/look/maxTurnDegreesPerSecond",
+                ),
+                Triple(
+                    completeJson().replace("\"enterRadius\":3.0", "\"enterRadius\":0.0"),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "/elements/3/proximity/enterRadius",
+                ),
+                Triple(
+                    completeJson().replace("\"exitRadius\":4.0", "\"exitRadius\":3.0"),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "/elements/3/proximity/exitRadius",
+                ),
+                Triple(
+                    npcScene(conditions = """[{"type":"permission","permission":"bad value"}]"""),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "$bindingPath/conditions/0/permission",
+                ),
+                Triple(
+                    npcScene().replace("\"cooldownMillis\":0", "\"cooldownMillis\":-1"),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "$bindingPath/cooldownMillis",
+                ),
+                Triple(
+                    npcScene().replace("\"debounceMillis\":0", "\"debounceMillis\":-1"),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "$bindingPath/debounceMillis",
+                ),
+                Triple(
+                    npcScene()
+                        .replace(
+                            "\"actions\":[{\"type\":\"send_message\",\"message\":{\"text\":\"hello\"}}]",
+                            "\"actions\":[]",
+                        ),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "$bindingPath/actions",
+                ),
+                Triple(
+                    completeJson().replace("\"volume\":1.0", "\"volume\":0.0"),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "$actionPath/2/volume",
+                ),
+                Triple(
+                    completeJson().replace("\"pitch\":1.0", "\"pitch\":0.0"),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "$actionPath/2/pitch",
+                ),
+                Triple(
+                    completeJson().replace("\"multiplier\":1.25", "\"multiplier\":0.0"),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "$actionPath/3/multiplier",
+                ),
+                Triple(
+                    completeJson().replace("\"transitionMillis\":250", "\"transitionMillis\":-1"),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "$actionPath/3/transitionMillis",
+                ),
+                Triple(
+                    completeJson()
+                        .replace(
+                            "\"enabled\":true,\"transitionMillis\":100",
+                            "\"enabled\":true,\"transitionMillis\":-1",
+                        ),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "$actionPath/4/transitionMillis",
+                ),
+                Triple(
+                    completeJson().replace("\"fadeInMillis\":100", "\"fadeInMillis\":-1"),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "$actionPath/7/fadeInMillis",
+                ),
+                Triple(
+                    completeJson().replace("\"stayMillis\":1000", "\"stayMillis\":-1"),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "$actionPath/7/stayMillis",
+                ),
+                Triple(
+                    completeJson().replace("\"fadeOutMillis\":100", "\"fadeOutMillis\":-1"),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "$actionPath/7/fadeOutMillis",
+                ),
+                Triple(
+                    completeJson().replace("\"count\":4", "\"count\":-1"),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "$actionPath/8/count",
+                ),
+                Triple(
+                    completeJson().replace("\"speed\":0.5", "\"speed\":-1.0"),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "$actionPath/8/speed",
+                ),
+                Triple(
+                    completeJson().replace("\"x\":0.1,\"y\":0.2", "\"x\":1e400,\"y\":0.2"),
+                    SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                    "$actionPath/8/offset/x",
+                ),
+            )
+            .forEach { (json, code, path) -> assertFailure(json, code, path) }
+    }
+
+    @Test
     fun `decode never returns a partial scene or a Jackson exception`() {
         val result: SceneDecodeResult = SceneJson.decode(byteArrayOf(0xC3.toByte(), 0x28))
         assertIs<SceneDecodeResult.Failure>(result)
@@ -279,8 +496,12 @@ class SceneJsonDecodeTest {
     private fun assertFailure(bytes: ByteArray, code: SceneProblemCode, path: String) {
         val result = SceneJson.decode(bytes)
         assertIs<SceneDecodeResult.Failure>(result)
-        assertEquals(code, result.problems.single().code)
-        assertEquals(path, result.problems.single().path)
+        assertEquals(
+            code,
+            result.problems.single().code,
+            "problem code at $path: ${result.problems}",
+        )
+        assertEquals(path, result.problems.single().path, "problem pointer for $code")
     }
 }
 

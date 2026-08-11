@@ -431,9 +431,8 @@ internal object WireReader {
 
     private fun double(node: JsonNode, key: String, path: String): Double {
         val value = node[key]
-        if (!value.isNumber || !value.doubleValue().isFinite())
-            fail(childPath(path, key), "MALFORMED_JSON", "Expected a finite number.")
-        return value.doubleValue()
+        if (!value.isNumber) fail(childPath(path, key), "MALFORMED_JSON", "Expected a number.")
+        return value.decimalValue().toDouble()
     }
 
     private fun integer(node: JsonNode, key: String, path: String): Int {

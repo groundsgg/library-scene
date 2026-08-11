@@ -177,54 +177,72 @@ internal object WireMapping {
             )
         return SceneDocument(
             w.schemaVersion,
-            SceneId(w.id),
+            sceneId(w.id, "/id"),
             SceneMetadata(w.metadata.name, w.metadata.description, w.metadata.tags.toSet()),
-            SceneCatalogReferences(catalog(w.catalogs.assets), catalog(w.catalogs.actions)),
-            w.groups.map { SceneGroup(LocalId(it.id), it.displayName, it.editorVisible) },
-            w.elements.map(::element),
+            SceneCatalogReferences(
+                catalog(w.catalogs.assets, "/catalogs/assets"),
+                catalog(w.catalogs.actions, "/catalogs/actions"),
+            ),
+            w.groups.mapIndexed { index, group ->
+                SceneGroup(
+                    localId(group.id, "/groups/$index/id"),
+                    group.displayName,
+                    group.editorVisible,
+                )
+            },
+            w.elements.mapIndexed { index, element -> element(element, "/elements/$index") },
         )
     }
 
-    private fun catalog(w: CatalogReferenceWire) = CatalogReference(CatalogId(w.id), w.version)
+    private fun catalog(w: CatalogReferenceWire, path: String): CatalogReference {
+        val id = catalogId(w.id, "$path/id")
+        return mapped("$path/version", "INVALID_IDENTIFIER") { CatalogReference(id, w.version) }
+    }
 
-    private fun element(w: ElementWire): SceneElement =
+    private fun element(w: ElementWire, path: String): SceneElement =
         when (w) {
             is PropWire ->
                 Prop(
-                    LocalId(w.id),
-                    w.group?.let(::LocalId),
-                    transform(w.transform),
+                    localId(w.id, "$path/id"),
+                    w.group?.let { localId(it, "$path/group") },
+                    transform(w.transform, "$path/transform"),
                     w.visible,
                     activation(w.activation),
-                    AssetKey(w.asset),
-                    w.initialAnimation?.let(::LocalId),
+                    assetKey(w.asset, "$path/asset"),
+                    w.initialAnimation?.let { localId(it, "$path/initialAnimation") },
                 )
             is CompositePropWire ->
                 CompositeProp(
-                    LocalId(w.id),
-                    w.group?.let(::LocalId),
-                    transform(w.transform),
+                    localId(w.id, "$path/id"),
+                    w.group?.let { localId(it, "$path/group") },
+                    transform(w.transform, "$path/transform"),
                     w.visible,
                     activation(w.activation),
-                    w.parts.map {
-                        CompositePart(LocalId(it.id), AssetKey(it.asset), transform(it.transform))
+                    w.parts.mapIndexed { index, part ->
+                        CompositePart(
+                            localId(part.id, "$path/parts/$index/id"),
+                            assetKey(part.asset, "$path/parts/$index/asset"),
+                            transform(part.transform, "$path/parts/$index/transform"),
+                        )
                     },
                 )
             is NpcWire ->
                 Npc(
-                    LocalId(w.id),
-                    w.group?.let(::LocalId),
-                    transform(w.transform),
+                    localId(w.id, "$path/id"),
+                    w.group?.let { localId(it, "$path/group") },
+                    transform(w.transform, "$path/transform"),
                     w.visible,
                     activation(w.activation),
-                    AssetKey(w.body),
+                    assetKey(w.body, "$path/body"),
                     w.label?.let(::component),
-                    vec(w.labelOffset),
-                    look(w.look),
-                    w.initialAnimation?.let(::LocalId),
-                    bounds(w.interactionBounds),
-                    w.proximity?.let { ProximitySensor(it.enterRadius, it.exitRadius) },
-                    w.bindings.map(::binding),
+                    vec(w.labelOffset, "$path/labelOffset", "NON_FINITE_TRANSFORM"),
+                    look(w.look, "$path/look"),
+                    w.initialAnimation?.let { localId(it, "$path/initialAnimation") },
+                    bounds(w.interactionBounds, "$path/interactionBounds"),
+                    w.proximity?.let { proximity(it, "$path/proximity") },
+                    w.bindings.mapIndexed { index, binding ->
+                        binding(binding, "$path/bindings/$index")
+                    },
                 )
         }
 
@@ -235,32 +253,77 @@ internal object WireMapping {
             else -> error("WireReader accepted an invalid activation policy")
         }
 
-    private fun transform(w: TransformWire) =
-        Transform(
-            vec(w.position),
-            EulerRotation(w.rotation.yaw, w.rotation.pitch, w.rotation.roll),
-            vec(w.scale),
-        )
+    private fun transform(w: TransformWire, path: String): Transform {
+        val position = vec(w.position, "$path/position", "NON_FINITE_TRANSFORM")
+        val rotation = rotation(w.rotation, "$path/rotation")
+        val scale = vec(w.scale, "$path/scale", "NON_FINITE_TRANSFORM")
+        val invalidScale = firstComponent(w.scale) { it <= 0.0 }
+        return mapped("$path/scale/${invalidScale ?: "x"}", "INVALID_SCALE") {
+            Transform(position, rotation, scale)
+        }
+    }
 
-    private fun vec(w: Vec3Wire) = Vec3(w.x, w.y, w.z)
+    private fun rotation(w: RotationWire, path: String): EulerRotation =
+        mapped("$path/${firstRotationComponent(w) ?: "yaw"}", "NON_FINITE_TRANSFORM") {
+            EulerRotation(w.yaw, w.pitch, w.roll)
+        }
 
-    private fun bounds(w: BoundsWire) = LocalBounds(vec(w.center), vec(w.size))
+    private fun vec(w: Vec3Wire, path: String, code: String): Vec3 =
+        mapped("$path/${firstComponent(w) { !it.isFinite() } ?: "x"}", code) { Vec3(w.x, w.y, w.z) }
 
-    private fun look(w: LookWire): LookBehavior =
+    private fun bounds(w: BoundsWire, path: String): LocalBounds {
+        val center = vec(w.center, "$path/center", "INVALID_BOUNDS")
+        val size = vec(w.size, "$path/size", "INVALID_BOUNDS")
+        val invalidSize = firstComponent(w.size) { it <= 0.0 }
+        return mapped("$path/size/${invalidSize ?: "x"}", "INVALID_BOUNDS") {
+            LocalBounds(center, size)
+        }
+    }
+
+    private fun look(w: LookWire, path: String): LookBehavior =
         when (w) {
             FixedLookWire -> LookBehavior.Fixed
             is TrackNearestLookWire ->
-                LookBehavior.TrackNearest(w.maxDistance, w.yawOnly, w.maxTurnDegreesPerSecond)
+                mapped(
+                    if (!w.maxDistance.isFinite() || w.maxDistance <= 0.0) "$path/maxDistance"
+                    else "$path/maxTurnDegreesPerSecond",
+                    "INVALID_ACTION_ARGUMENT",
+                ) {
+                    LookBehavior.TrackNearest(w.maxDistance, w.yawOnly, w.maxTurnDegreesPerSecond)
+                }
         }
 
-    private fun binding(w: BindingWire) =
-        TriggerBinding(
-            trigger(w.trigger),
-            w.conditions.map(::condition),
-            w.cooldownMillis,
-            w.debounceMillis,
-            w.actions.map(::action),
-        )
+    private fun proximity(w: ProximityWire, path: String): ProximitySensor =
+        mapped(
+            if (!w.enterRadius.isFinite() || w.enterRadius <= 0.0) "$path/enterRadius"
+            else "$path/exitRadius",
+            "INVALID_ACTION_ARGUMENT",
+        ) {
+            ProximitySensor(w.enterRadius, w.exitRadius)
+        }
+
+    private fun binding(w: BindingWire, path: String): TriggerBinding {
+        val actions =
+            w.actions.mapIndexed { index, action -> action(action, "$path/actions/$index") }
+        val pointer =
+            when {
+                w.cooldownMillis < 0 -> "$path/cooldownMillis"
+                w.debounceMillis < 0 -> "$path/debounceMillis"
+                actions.isEmpty() -> "$path/actions"
+                else -> path
+            }
+        return mapped(pointer, "INVALID_ACTION_ARGUMENT") {
+            TriggerBinding(
+                trigger(w.trigger),
+                w.conditions.mapIndexed { index, condition ->
+                    condition(condition, "$path/conditions/$index")
+                },
+                w.cooldownMillis,
+                w.debounceMillis,
+                actions,
+            )
+        }
+    }
 
     private fun trigger(v: String) =
         when (v) {
@@ -273,12 +336,15 @@ internal object WireMapping {
             else -> error("WireReader accepted an invalid trigger")
         }
 
-    private fun condition(w: ConditionWire): SceneCondition =
+    private fun condition(w: ConditionWire, path: String): SceneCondition =
         when (w) {
             is HandConditionWire ->
                 HandCondition(if (w.hand == "MAIN") SceneHand.MAIN else SceneHand.OFF)
             is SneakingConditionWire -> SneakingCondition(w.sneaking)
-            is PermissionConditionWire -> PermissionCondition(w.permission)
+            is PermissionConditionWire ->
+                mapped("$path/permission", "INVALID_ACTION_ARGUMENT") {
+                    PermissionCondition(w.permission)
+                }
             is GameModeConditionWire ->
                 GameModeCondition(
                     when (w.gameMode) {
@@ -291,51 +357,144 @@ internal object WireMapping {
                 )
         }
 
-    private fun action(w: ActionWire): SceneAction =
+    private fun action(w: ActionWire, path: String): SceneAction =
         when (w) {
-            is StartAnimationWire -> StartAnimationAction(target(w.target), LocalId(w.animation))
+            is StartAnimationWire ->
+                StartAnimationAction(
+                    target(w.target, "$path/target"),
+                    localId(w.animation, "$path/animation"),
+                )
             is StopAnimationWire ->
-                StopAnimationAction(target(w.target), w.animation?.let(::LocalId))
-            is PlaySoundWire -> PlaySoundAction(AssetKey(w.sound), w.volume, w.pitch)
+                StopAnimationAction(
+                    target(w.target, "$path/target"),
+                    w.animation?.let { localId(it, "$path/animation") },
+                )
+            is PlaySoundWire ->
+                mapped(
+                    if (!w.volume.isFinite() || w.volume <= 0.0) "$path/volume" else "$path/pitch",
+                    "INVALID_ACTION_ARGUMENT",
+                ) {
+                    PlaySoundAction(assetKey(w.sound, "$path/sound"), w.volume, w.pitch)
+                }
             is SetViewerScaleWire ->
-                SetViewerScaleAction(target(w.target), w.multiplier, w.transitionMillis)
+                mapped(
+                    if (!w.multiplier.isFinite() || w.multiplier <= 0.0) "$path/multiplier"
+                    else "$path/transitionMillis",
+                    "INVALID_ACTION_ARGUMENT",
+                ) {
+                    SetViewerScaleAction(
+                        target(w.target, "$path/target"),
+                        w.multiplier,
+                        w.transitionMillis,
+                    )
+                }
             is SetViewerHighlightWire ->
-                SetViewerHighlightAction(target(w.target), w.enabled, w.transitionMillis)
+                mapped("$path/transitionMillis", "INVALID_ACTION_ARGUMENT") {
+                    SetViewerHighlightAction(
+                        target(w.target, "$path/target"),
+                        w.enabled,
+                        w.transitionMillis,
+                    )
+                }
             is SendMessageWire -> SendMessageAction(component(w.message))
             is SendActionBarWire -> SendActionBarAction(component(w.message))
             is ShowTitleWire ->
-                ShowTitleAction(
-                    component(w.title),
-                    component(w.subtitle),
-                    w.fadeInMillis,
-                    w.stayMillis,
-                    w.fadeOutMillis,
-                )
+                mapped(
+                    when {
+                        w.fadeInMillis < 0 -> "$path/fadeInMillis"
+                        w.stayMillis < 0 -> "$path/stayMillis"
+                        else -> "$path/fadeOutMillis"
+                    },
+                    "INVALID_ACTION_ARGUMENT",
+                ) {
+                    ShowTitleAction(
+                        component(w.title),
+                        component(w.subtitle),
+                        w.fadeInMillis,
+                        w.stayMillis,
+                        w.fadeOutMillis,
+                    )
+                }
             is EmitParticleWire ->
-                EmitParticleAction(
-                    target(w.target),
-                    AssetKey(w.particle),
-                    w.count,
-                    vec(w.offset),
-                    w.speed,
-                )
+                mapped(
+                    when {
+                        w.count < 0 -> "$path/count"
+                        !w.speed.isFinite() || w.speed < 0.0 -> "$path/speed"
+                        else -> path
+                    },
+                    "INVALID_ACTION_ARGUMENT",
+                ) {
+                    EmitParticleAction(
+                        target(w.target, "$path/target"),
+                        assetKey(w.particle, "$path/particle"),
+                        w.count,
+                        vec(w.offset, "$path/offset", "INVALID_ACTION_ARGUMENT"),
+                        w.speed,
+                    )
+                }
             is ApplicationWire ->
                 ApplicationAction(
-                    ActionKey(w.key),
-                    w.arguments.mapKeys { LocalId(it.key) }.mapValues { argument(it.value) },
+                    actionKey(w.key, "$path/key"),
+                    w.arguments.entries.associate { (key, value) ->
+                        localId(key, childPath("$path/arguments", key)) to
+                            argument(value, childPath("$path/arguments", key))
+                    },
                 )
         }
 
-    private fun target(w: TargetWire) = ElementTarget(LocalId(w.element), w.part?.let(::LocalId))
+    private fun target(w: TargetWire, path: String) =
+        ElementTarget(
+            localId(w.element, "$path/element"),
+            w.part?.let { localId(it, "$path/part") },
+        )
 
-    private fun argument(w: ArgumentWire): ApplicationArgument =
+    private fun argument(w: ArgumentWire, path: String): ApplicationArgument =
         when (w) {
             is StringArgumentWire -> StringArgument(w.value)
             is LongArgumentWire -> LongArgument(w.value)
-            is DecimalArgumentWire -> DecimalArgument(w.value)
+            is DecimalArgumentWire ->
+                mapped("$path/value", "LIMIT_EXCEEDED") { DecimalArgument(w.value) }
             is BooleanArgumentWire -> BooleanArgument(w.value)
-            is EnumArgumentWire -> EnumArgument(LocalId(w.value))
-            is AssetArgumentWire -> AssetArgument(AssetKey(w.value))
+            is EnumArgumentWire -> EnumArgument(localId(w.value, "$path/value"))
+            is AssetArgumentWire -> AssetArgument(assetKey(w.value, "$path/value"))
+        }
+
+    private fun sceneId(value: String, path: String) =
+        mapped(path, "INVALID_IDENTIFIER") { SceneId(value) }
+
+    private fun catalogId(value: String, path: String) =
+        mapped(path, "INVALID_IDENTIFIER") { CatalogId(value) }
+
+    private fun actionKey(value: String, path: String) =
+        mapped(path, "INVALID_IDENTIFIER") { ActionKey(value) }
+
+    private fun assetKey(value: String, path: String) =
+        mapped(path, "INVALID_IDENTIFIER") { AssetKey(value) }
+
+    private fun localId(value: String, path: String) =
+        mapped(path, "INVALID_IDENTIFIER") { LocalId(value) }
+
+    private inline fun <T> mapped(path: String, code: String, construct: () -> T): T =
+        try {
+            construct()
+        } catch (_: IllegalArgumentException) {
+            throw DecodeFailure(path, code, "Scene value violates a domain invariant.")
+        }
+
+    private fun firstComponent(value: Vec3Wire, predicate: (Double) -> Boolean): String? =
+        when {
+            predicate(value.x) -> "x"
+            predicate(value.y) -> "y"
+            predicate(value.z) -> "z"
+            else -> null
+        }
+
+    private fun firstRotationComponent(value: RotationWire): String? =
+        when {
+            !value.yaw.isFinite() -> "yaw"
+            !value.pitch.isFinite() -> "pitch"
+            !value.roll.isFinite() -> "roll"
+            else -> null
         }
 
     private fun component(json: JsonNode): Component =
