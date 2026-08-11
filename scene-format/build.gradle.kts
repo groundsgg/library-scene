@@ -6,6 +6,8 @@ dependencies {
     testImplementation(project(":scene-testkit"))
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testImplementation("org.jetbrains.kotlin:kotlin-metadata-jvm:2.2.20")
+    testImplementation("org.ow2.asm:asm:9.8")
 }
 
 tasks.withType<Test>().configureEach {
