@@ -45,7 +45,9 @@ internal object DependencyBoundary {
             "gg.grounds:resource-pack-builder",
             "gg.grounds:resource-pack-testkit",
             "gg.grounds:scene-testkit",
+            "junit:junit",
             "org.jetbrains.kotlin:kotlin-test",
+            "org.jetbrains.kotlin:kotlin-test-annotations-common",
             "org.jetbrains.kotlin:kotlin-test-common",
             "org.jetbrains.kotlin:kotlin-test-junit",
             "org.jetbrains.kotlin:kotlin-test-junit5",
@@ -119,7 +121,8 @@ internal object AbiBoundary {
 
     fun kotlinPublicClasses(classFiles: Map<String, ByteArray>): Set<String> =
         classFiles.entries.mapNotNullTo(sortedSetOf()) { (entry, bytes) ->
-            if (isKotlinPublic(bytes)) binaryName(entry) else null
+            val binaryName = binaryName(entry)
+            if (isKotlinPublic(binaryName, bytes)) binaryName else null
         }
 
     fun assertExactKotlinPublicClasses(
@@ -193,15 +196,19 @@ internal object AbiBoundary {
         return lines
     }
 
-    private fun isKotlinPublic(bytes: ByteArray): Boolean {
+    private fun isKotlinPublic(binaryName: String, bytes: ByteArray): Boolean {
         val metadata = readMetadata(bytes) ?: return false
         return when (val parsed = KotlinClassMetadata.readLenient(metadata)) {
             is KotlinClassMetadata.Class -> parsed.kmClass.visibility.isPublicApi()
             is KotlinClassMetadata.FileFacade -> parsed.kmPackage.hasPublicDeclaration()
             is KotlinClassMetadata.MultiFileClassPart -> parsed.kmPackage.hasPublicDeclaration()
-            is KotlinClassMetadata.MultiFileClassFacade -> false
+            is KotlinClassMetadata.MultiFileClassFacade -> true
             is KotlinClassMetadata.SyntheticClass -> false
-            is KotlinClassMetadata.Unknown -> false
+            is KotlinClassMetadata.Unknown ->
+                throw AssertionError(
+                    "Unsupported Kotlin metadata for $binaryName: " +
+                        "kind=${metadata.kind} metadataVersion=${metadata.metadataVersion.contentToString()}"
+                )
         }
     }
 
