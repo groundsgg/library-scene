@@ -1,5 +1,6 @@
 package gg.grounds.scene.format.internal
 
+import gg.grounds.scene.format.requireCanonicalDecimal
 import java.math.BigDecimal
 import tools.jackson.databind.JsonNode
 
@@ -452,7 +453,17 @@ internal object WireReader {
     private fun decimal(node: JsonNode, key: String, path: String): BigDecimal {
         val value = node[key]
         if (!value.isNumber) fail(childPath(path, key), "MALFORMED_JSON", "Expected a number.")
-        return value.decimalValue()
+        val decimal = value.decimalValue()
+        try {
+            requireCanonicalDecimal(decimal)
+        } catch (_: IllegalArgumentException) {
+            fail(
+                childPath(path, key),
+                "LIMIT_EXCEEDED",
+                "Canonical decimal exceeds 128 characters.",
+            )
+        }
+        return decimal
     }
 
     private fun fail(path: String, code: String, message: String): Nothing =

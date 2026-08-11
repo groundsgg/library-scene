@@ -3,6 +3,7 @@ package gg.grounds.scene.format
 import java.math.BigDecimal
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class ActionsTest {
     @Test
@@ -20,5 +21,13 @@ class ActionsTest {
             (action.arguments.getValue(LocalId("weight")) as DecimalArgument).value,
         )
         assertEquals(listOf("weight", "name"), action.arguments.keys.map { it.value })
+    }
+
+    @Test
+    fun `decimal arguments reject canonical plain values longer than numeric token limit`() {
+        DecimalArgument(BigDecimal("1e127"))
+
+        assertFailsWith<IllegalArgumentException> { DecimalArgument(BigDecimal("1e200")) }
+        assertFailsWith<IllegalArgumentException> { DecimalArgument(BigDecimal("1e1000000")) }
     }
 }

@@ -31,6 +31,7 @@ internal object SceneMapper {
         JsonMapper.builder(factory)
             .addModule(kotlinModule())
             .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
             .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS)
             .build()
 

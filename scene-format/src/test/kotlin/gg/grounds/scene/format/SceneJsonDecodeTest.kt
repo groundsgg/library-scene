@@ -245,6 +245,22 @@ class SceneJsonDecodeTest {
     }
 
     @Test
+    fun `decimal arguments reject oversized canonical expansion at their exact pointer`() {
+        val path = "/elements/3/bindings/0/actions/9/arguments/decimal/value"
+
+        assertFailure(
+            completeJson().replace("\"value\":12.50", "\"value\":1e200"),
+            SceneProblemCode.LIMIT_EXCEEDED,
+            path,
+        )
+        assertFailure(
+            completeJson().replace("\"value\":12.50", "\"value\":1e1000000"),
+            SceneProblemCode.LIMIT_EXCEEDED,
+            path,
+        )
+    }
+
+    @Test
     fun `decode never returns a partial scene or a Jackson exception`() {
         val result: SceneDecodeResult = SceneJson.decode(byteArrayOf(0xC3.toByte(), 0x28))
         assertIs<SceneDecodeResult.Failure>(result)

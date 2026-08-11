@@ -78,7 +78,11 @@ data class StringArgument(val value: String) : ApplicationArgument
 
 data class LongArgument(val value: Long) : ApplicationArgument
 
-data class DecimalArgument(val value: BigDecimal) : ApplicationArgument
+data class DecimalArgument(val value: BigDecimal) : ApplicationArgument {
+    init {
+        requireCanonicalDecimal(value)
+    }
+}
 
 data class BooleanArgument(val value: Boolean) : ApplicationArgument
 
@@ -101,4 +105,20 @@ private constructor(
 
 private fun requireNonNegativeMillis(value: Long, name: String) {
     require(value >= 0) { "$name must be non-negative." }
+}
+
+internal fun requireCanonicalDecimal(value: BigDecimal): BigDecimal {
+    val canonical = value.stripTrailingZeros()
+    val precision = canonical.precision().toLong()
+    val scale = canonical.scale().toLong()
+    val signLength = if (canonical.signum() < 0) 1L else 0L
+    val plainLength =
+        when {
+            canonical.signum() == 0 -> 1L
+            scale <= 0L -> signLength + precision - scale
+            precision > scale -> signLength + precision + 1L
+            else -> signLength + scale + 2L
+        }
+    require(plainLength <= 128L) { "Canonical decimal exceeds 128 characters." }
+    return value
 }
