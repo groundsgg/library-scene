@@ -2,6 +2,9 @@ package gg.grounds.scene.format
 
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.test.assertIs
 
 class SceneRoundTripTest {
@@ -12,5 +15,20 @@ class SceneRoundTripTest {
         val decoded = assertIs<SceneDecodeResult.Success>(SceneJson.decode(bytes)).scene
 
         assertContentEquals(bytes, assertIs<SceneEncodeResult.Success>(SceneJson.encode(decoded)).bytes)
+    }
+
+    @Test
+    fun `public decode encode decode preserves JSON escaped surrogate strings`() {
+        val json = validJson().replace("\"name\":\"Scene\"", "\"name\":\"high\\uD800 low\\uDC00 pair\\uD83D\\uDE00\"")
+
+        val first = assertIs<SceneDecodeResult.Success>(SceneJson.decode(json.encodeToByteArray())).scene
+        val bytes = assertIs<SceneEncodeResult.Success>(SceneJson.encode(first)).bytes
+        val second = assertIs<SceneDecodeResult.Success>(SceneJson.decode(bytes)).scene
+        val text = bytes.decodeToString()
+
+        assertEquals("high\uD800 low\uDC00 pair😀", first.metadata.name)
+        assertEquals(first.metadata.name, second.metadata.name)
+        assertTrue("\"name\": \"high\\uD800 low\\uDC00 pair😀\"" in text)
+        assertFalse('\uFFFD' in text)
     }
 }
