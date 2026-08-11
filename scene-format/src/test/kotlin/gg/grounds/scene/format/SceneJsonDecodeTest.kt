@@ -160,6 +160,22 @@ class SceneJsonDecodeTest {
     }
 
     @Test
+    fun `Adventure packed shadow color follows Gson integer-valued numeric coercion`() {
+        assertIs<SceneDecodeResult.Success>(SceneJson.decode(sceneWithPackedShadowColor("1.0").encodeToByteArray()))
+        assertIs<SceneDecodeResult.Success>(SceneJson.decode(sceneWithPackedShadowColor("1e0").encodeToByteArray()))
+        assertFailure(
+            sceneWithPackedShadowColor("1.5"),
+            SceneProblemCode.MALFORMED_JSON,
+            "/elements/0/bindings/0/actions/0/message/shadow_color",
+        )
+        assertFailure(
+            sceneWithPackedShadowColor("2147483648"),
+            SceneProblemCode.MALFORMED_JSON,
+            "/elements/0/bindings/0/actions/0/message/shadow_color",
+        )
+    }
+
+    @Test
     fun `decode maps the complete v1 wire model and passes intrinsic validation`() {
         val result = SceneJson.decode(completeJson().encodeToByteArray())
         assertIs<SceneDecodeResult.Success>(result)
@@ -213,6 +229,10 @@ class SceneJsonDecodeTest {
 
     private fun assertFailure(json: String, code: SceneProblemCode, path: String) =
         assertFailure(json.encodeToByteArray(), code, path)
+
+    private fun sceneWithPackedShadowColor(value: String) = npcScene(
+        action = """{"type":"send_message","message":{"text":"shadowed","shadow_color":$value}}""",
+    )
 
     private fun assertFailure(bytes: ByteArray, code: SceneProblemCode, path: String) {
         val result = SceneJson.decode(bytes)

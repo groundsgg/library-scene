@@ -156,7 +156,14 @@ internal object ComponentWireValidator {
         if (!node.has("shadow_color")) return
         val value = node["shadow_color"]
         val valuePath = childPath(path, "shadow_color")
-        if (value.isIntegralNumber && value.canConvertToInt()) return
+        if (value.isNumber) {
+            try {
+                value.decimalValue().intValueExact()
+                return
+            } catch (_: ArithmeticException) {
+                fail(valuePath, "MALFORMED_JSON", "Packed shadow color must be an integer in the signed 32-bit range.")
+            }
+        }
         if (!value.isArray || value.size() != 4) {
             fail(valuePath, "MALFORMED_JSON", "Shadow color must be an integer or four-number array.")
         }
