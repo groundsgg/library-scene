@@ -108,6 +108,58 @@ class SceneJsonDecodeTest {
     }
 
     @Test
+    fun `unsupported Adventure click fields and unreadable actions are rejected at exact pointers`() {
+        val eventPath = "/elements/0/bindings/0/actions/0/message/click_event"
+        listOf("id", "payload").forEach { field ->
+            assertFailure(
+                npcScene(
+                    action = """{"type":"send_message","message":{"text":"unsafe","click_event":{"action":"run_command","$field":"ignored"}}}""",
+                ),
+                SceneProblemCode.UNKNOWN_FIELD,
+                "$eventPath/$field",
+            )
+        }
+        listOf("open_file", "future_action").forEach { action ->
+            assertFailure(
+                npcScene(
+                    action = """{"type":"send_message","message":{"text":"unsafe","click_event":{"action":"$action","path":"/tmp/file"}}}""",
+                ),
+                SceneProblemCode.UNKNOWN_TYPE,
+                "$eventPath/action",
+            )
+        }
+    }
+
+    @Test
+    fun `every accepted Adventure click shape materializes for intrinsic rejection`() {
+        listOf(
+            """{"action":"copy_to_clipboard","value":"copy"}""",
+            """{"action":"open_url","url":"https://example.com"}""",
+            """{"action":"run_command","path":"/recognized-by-gson"}""",
+            """{"action":"suggest_command","command":"/say hi"}""",
+            """{"action":"change_page","page":2}""",
+        ).forEach { event ->
+            val result = SceneJson.decode(
+                npcScene(
+                    action = """{"type":"send_message","message":{"text":"unsafe","click_event":$event}}""",
+                ).encodeToByteArray(),
+            )
+            assertIs<SceneDecodeResult.Failure>(result)
+            assertEquals(SceneProblemCode.FORBIDDEN_TEXT_EVENT, result.problems.single().code)
+        }
+    }
+
+    @Test
+    fun `Adventure four-number shadow color array decodes as safe rich text`() {
+        val result = SceneJson.decode(
+            npcScene(
+                action = """{"type":"send_message","message":{"text":"shadowed","shadow_color":[1.0,0.5,0.25,0.75]}}""",
+            ).encodeToByteArray(),
+        )
+        assertIs<SceneDecodeResult.Success>(result)
+    }
+
+    @Test
     fun `decode maps the complete v1 wire model and passes intrinsic validation`() {
         val result = SceneJson.decode(completeJson().encodeToByteArray())
         assertIs<SceneDecodeResult.Success>(result)

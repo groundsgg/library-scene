@@ -11,7 +11,8 @@ internal object ComponentWireValidator {
         "click_event", "clickEvent", "hover_event", "hoverEvent",
     )
     private val contentFields = setOf("text", "translate", "score", "selector", "keybind", "nbt", "plain")
-    private val clickFields = setOf("action", "value", "url", "path", "command", "page", "id", "payload")
+    private val clickFields = setOf("action", "value", "url", "path", "command", "page")
+    private val readableClickActions = setOf("open_url", "run_command", "suggest_command", "change_page", "copy_to_clipboard")
     private val hoverFields = setOf("action", "contents", "value")
     private val scoreFields = setOf("name", "objective", "value")
     private val showEntityFields = setOf("type", "id", "uuid", "name")
@@ -44,7 +45,7 @@ internal object ComponentWireValidator {
         optionalString(node, "font", path)
         optionalString(node, "color", path)
         optionalString(node, "insertion", path)
-        optionalStringOrNumber(node, "shadow_color", path)
+        optionalShadowColor(node, path)
         listOf("bold", "italic", "underlined", "strikethrough", "obfuscated").forEach { optionalBoolean(node, it, path) }
         optionalComponents(node, "extra", path)
         optionalComponent(node, "separator", path)
@@ -83,10 +84,13 @@ internal object ComponentWireValidator {
         val event = node[key]
         objectNode(event, eventPath)
         rejectUnknown(event, clickFields, eventPath, "click event")
-        requiredString(event, "action", eventPath)
+        val action = requiredString(event, "action", eventPath)
+        if (action !in readableClickActions) {
+            fail(childPath(eventPath, "action"), "UNKNOWN_TYPE", "Unknown or unreadable click event type.")
+        }
         val payloads = clickFields.filter { it != "action" && event.has(it) }
         if (payloads.size != 1) fail(eventPath, "UNKNOWN_TYPE", "Click event must declare exactly one payload.")
-        scalarString(event[payloads.single()], childPath(eventPath, payloads.single()))
+        scalarStringOrNumber(event[payloads.single()], childPath(eventPath, payloads.single()))
     }
 
     private fun optionalHover(node: JsonNode, key: String, path: String) {
@@ -148,9 +152,18 @@ internal object ComponentWireValidator {
         if (node.has(key)) scalarString(node[key], childPath(path, key))
     }
 
-    private fun optionalStringOrNumber(node: JsonNode, key: String, path: String) {
-        if (node.has(key) && !node[key].isString && !node[key].isNumber) {
-            fail(childPath(path, key), "MALFORMED_JSON", "Component property must be a string or number.")
+    private fun optionalShadowColor(node: JsonNode, path: String) {
+        if (!node.has("shadow_color")) return
+        val value = node["shadow_color"]
+        val valuePath = childPath(path, "shadow_color")
+        if (value.isIntegralNumber && value.canConvertToInt()) return
+        if (!value.isArray || value.size() != 4) {
+            fail(valuePath, "MALFORMED_JSON", "Shadow color must be an integer or four-number array.")
+        }
+        value.forEachIndexed { index, component ->
+            if (!component.isNumber) {
+                fail(childPath(valuePath, index.toString()), "MALFORMED_JSON", "Shadow color components must be numbers.")
+            }
         }
     }
 
@@ -161,6 +174,12 @@ internal object ComponentWireValidator {
     private fun scalarString(node: JsonNode, path: String): String {
         if (!node.isString) fail(path, "MALFORMED_JSON", "Component property must be a string.")
         return node.stringValue()
+    }
+
+    private fun scalarStringOrNumber(node: JsonNode, path: String) {
+        if (!node.isString && !node.isNumber) {
+            fail(path, "MALFORMED_JSON", "Click event payload must be a string or number.")
+        }
     }
 
     private fun objectNode(node: JsonNode, path: String) {
