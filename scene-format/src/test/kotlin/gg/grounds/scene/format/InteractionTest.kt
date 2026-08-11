@@ -31,14 +31,19 @@ class InteractionTest {
     @Test
     fun `interaction numeric values reject invalid bounds`() {
         assertFailsWith<IllegalArgumentException> { LookBehavior.TrackNearest(0.0, true, 90.0) }
-        assertFailsWith<IllegalArgumentException> { PlaySoundAction(AssetKey("grounds:bell"), 0.0, 1.0) }
+        assertFailsWith<IllegalArgumentException> {
+            PlaySoundAction(AssetKey("grounds:bell"), 0.0, 1.0)
+        }
         assertFailsWith<IllegalArgumentException> { SetViewerScaleAction(target(), 0.0, 0) }
         assertFailsWith<IllegalArgumentException> { SetViewerHighlightAction(target(), true, -1) }
-        assertFailsWith<IllegalArgumentException> { EmitParticleAction(target(), AssetKey("grounds:spark"), -1, ORIGIN, 0.0) }
+        assertFailsWith<IllegalArgumentException> {
+            EmitParticleAction(target(), AssetKey("grounds:spark"), -1, ORIGIN, 0.0)
+        }
         assertFailsWith<IllegalArgumentException> { PermissionCondition("permission node") }
     }
 
     private fun target() = ElementTarget(LocalId("npc"), null)
 
-    private fun message(value: String) = SendMessageAction(net.kyori.adventure.text.Component.text(value))
+    private fun message(value: String) =
+        SendMessageAction(net.kyori.adventure.text.Component.text(value))
 }

@@ -4,27 +4,37 @@ private val identifierSegment = Regex("[a-z0-9._-]+")
 
 @JvmInline
 value class SceneId(val value: String) {
-    init { requireNamespaced(value) }
+    init {
+        requireNamespaced(value)
+    }
 }
 
 @JvmInline
 value class AssetKey(val value: String) {
-    init { requireNamespaced(value) }
+    init {
+        requireNamespaced(value)
+    }
 }
 
 @JvmInline
 value class ActionKey(val value: String) {
-    init { requireNamespaced(value) }
+    init {
+        requireNamespaced(value)
+    }
 }
 
 @JvmInline
 value class CatalogId(val value: String) {
-    init { requireNamespaced(value) }
+    init {
+        requireNamespaced(value)
+    }
 }
 
 @JvmInline
 value class LocalId(val value: String) {
-    init { requireLocal(value) }
+    init {
+        requireLocal(value)
+    }
 }
 
 data class CatalogReference(val id: CatalogId, val version: String) {
@@ -46,7 +56,5 @@ private fun requireNamespaced(value: String) {
 }
 
 private fun requireLocal(value: String) {
-    require(identifierSegment.matches(value)) {
-        "Local identifier must be a lowercase segment."
-    }
+    require(identifierSegment.matches(value)) { "Local identifier must be a lowercase segment." }
 }

@@ -1,38 +1,48 @@
 package gg.grounds.scene.format
 
 @ConsistentCopyVisibility
-data class Vec3 private constructor(
+data class Vec3
+private constructor(
     val x: Double,
     val y: Double,
     val z: Double,
     @Suppress("unused") private val canonical: Unit,
 ) {
-    constructor(x: Double, y: Double, z: Double) : this(
-        canonicalComponent(x), canonicalComponent(y), canonicalComponent(z), Unit,
-    )
+    constructor(
+        x: Double,
+        y: Double,
+        z: Double,
+    ) : this(canonicalComponent(x), canonicalComponent(y), canonicalComponent(z), Unit)
 }
 
 @ConsistentCopyVisibility
-data class EulerRotation private constructor(
+data class EulerRotation
+private constructor(
     val yaw: Double,
     val pitch: Double,
     val roll: Double,
     @Suppress("unused") private val canonical: Unit,
 ) {
-    constructor(yaw: Double, pitch: Double, roll: Double) : this(
-        canonicalAngle(yaw), canonicalAngle(pitch), canonicalAngle(roll), Unit,
-    )
+    constructor(
+        yaw: Double,
+        pitch: Double,
+        roll: Double,
+    ) : this(canonicalAngle(yaw), canonicalAngle(pitch), canonicalAngle(roll), Unit)
 }
 
 data class Transform(val position: Vec3, val rotation: EulerRotation, val scale: Vec3) {
     init {
-        require(scale.x > 0.0 && scale.y > 0.0 && scale.z > 0.0) { "Transform scale must be positive." }
+        require(scale.x > 0.0 && scale.y > 0.0 && scale.z > 0.0) {
+            "Transform scale must be positive."
+        }
     }
 }
 
 data class LocalBounds(val center: Vec3, val size: Vec3) {
     init {
-        require(size.x > 0.0 && size.y > 0.0 && size.z > 0.0) { "Local bounds size must be positive." }
+        require(size.x > 0.0 && size.y > 0.0 && size.z > 0.0) {
+            "Local bounds size must be positive."
+        }
     }
 }
 

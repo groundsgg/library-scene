@@ -17,20 +17,22 @@ import tools.jackson.module.kotlin.kotlinModule
 
 internal object SceneMapper {
     private const val MAX_BYTES = 16 * 1024 * 1024
-    private val factory = JsonFactory.builder()
-        .streamReadConstraints(
-            StreamReadConstraints.builder()
-                .maxNestingDepth(64)
-                .maxStringLength(65_536)
-                .maxNumberLength(128)
-                .build(),
-        )
-        .build()
-    private val mapper: JsonMapper = JsonMapper.builder(factory)
-        .addModule(kotlinModule())
-        .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-        .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS)
-        .build()
+    private val factory =
+        JsonFactory.builder()
+            .streamReadConstraints(
+                StreamReadConstraints.builder()
+                    .maxNestingDepth(64)
+                    .maxStringLength(65_536)
+                    .maxNumberLength(128)
+                    .build()
+            )
+            .build()
+    private val mapper: JsonMapper =
+        JsonMapper.builder(factory)
+            .addModule(kotlinModule())
+            .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS)
+            .build()
 
     fun read(bytes: ByteArray): SceneWire {
         if (bytes.size > MAX_BYTES) {
@@ -39,8 +41,13 @@ internal object SceneMapper {
         validateUtf8(bytes)
         try {
             validateSingleValue(bytes)
-            val node = mapper.readTree(bytes)
-                ?: throw DecodeFailure("/", "MALFORMED_JSON", "Scene JSON must contain one value.")
+            val node =
+                mapper.readTree(bytes)
+                    ?: throw DecodeFailure(
+                        "/",
+                        "MALFORMED_JSON",
+                        "Scene JSON must contain one value.",
+                    )
             return WireReader.readScene(node)
         } catch (failure: DecodeFailure) {
             throw failure
@@ -65,16 +72,26 @@ internal object SceneMapper {
     }
 
     /**
-     * Consumes Jackson's token stream once before tree binding. This makes duplicate and trailing-value
-     * classification independent of exception wording while forcing all configured token constraints.
+     * Consumes Jackson's token stream once before tree binding. This makes duplicate and
+     * trailing-value classification independent of exception wording while forcing all configured
+     * token constraints.
      */
     private fun validateSingleValue(bytes: ByteArray) {
         mapper.createParser(bytes).use { parser ->
-            val first = parser.nextToken()
-                ?: throw DecodeFailure("/", "MALFORMED_JSON", "Scene JSON must contain one value.")
+            val first =
+                parser.nextToken()
+                    ?: throw DecodeFailure(
+                        "/",
+                        "MALFORMED_JSON",
+                        "Scene JSON must contain one value.",
+                    )
             validateValue(parser, first, "/")
             if (parser.nextToken() != null) {
-                throw DecodeFailure("/", "TRAILING_TOKEN", "Scene JSON must contain exactly one value.")
+                throw DecodeFailure(
+                    "/",
+                    "TRAILING_TOKEN",
+                    "Scene JSON must contain exactly one value.",
+                )
             }
         }
     }
@@ -83,10 +100,14 @@ internal object SceneMapper {
         when (token) {
             JsonToken.START_OBJECT -> validateObject(parser, path)
             JsonToken.START_ARRAY -> validateArray(parser, path)
-            JsonToken.VALUE_STRING, JsonToken.VALUE_NUMBER_INT, JsonToken.VALUE_NUMBER_FLOAT -> {
+            JsonToken.VALUE_STRING,
+            JsonToken.VALUE_NUMBER_INT,
+            JsonToken.VALUE_NUMBER_FLOAT -> {
                 parser.string // Force Jackson to materialize and constrain the complete token.
             }
-            JsonToken.VALUE_TRUE, JsonToken.VALUE_FALSE, JsonToken.VALUE_NULL -> Unit
+            JsonToken.VALUE_TRUE,
+            JsonToken.VALUE_FALSE,
+            JsonToken.VALUE_NULL -> Unit
             else -> throw DecodeFailure(path, "MALFORMED_JSON", "Expected a JSON value.")
         }
     }
@@ -98,13 +119,23 @@ internal object SceneMapper {
                 JsonToken.END_OBJECT -> return
                 JsonToken.PROPERTY_NAME -> {
                     val name = parser.currentName()
-                    parser.string // Force field-name constraints as well as value-string constraints.
+                    parser
+                        .string // Force field-name constraints as well as value-string constraints.
                     val fieldPath = childPath(path, name)
                     if (!names.add(name)) {
-                        throw DecodeFailure(fieldPath, "DUPLICATE_FIELD", "Object field is duplicated.")
+                        throw DecodeFailure(
+                            fieldPath,
+                            "DUPLICATE_FIELD",
+                            "Object field is duplicated.",
+                        )
                     }
-                    val value = parser.nextToken()
-                        ?: throw DecodeFailure(fieldPath, "MALFORMED_JSON", "Object field has no value.")
+                    val value =
+                        parser.nextToken()
+                            ?: throw DecodeFailure(
+                                fieldPath,
+                                "MALFORMED_JSON",
+                                "Object field has no value.",
+                            )
                     validateValue(parser, value, fieldPath)
                 }
                 else -> throw DecodeFailure(path, "MALFORMED_JSON", "Object is incomplete.")
@@ -115,8 +146,9 @@ internal object SceneMapper {
     private fun validateArray(parser: JsonParser, path: String) {
         var index = 0
         while (true) {
-            val token = parser.nextToken()
-                ?: throw DecodeFailure(path, "MALFORMED_JSON", "Array is incomplete.")
+            val token =
+                parser.nextToken()
+                    ?: throw DecodeFailure(path, "MALFORMED_JSON", "Array is incomplete.")
             if (token == JsonToken.END_ARRAY) return
             validateValue(parser, token, childPath(path, index.toString()))
             index++

@@ -19,8 +19,12 @@ class GeometryTest {
 
     @Test
     fun `transform rejects non-finite and non-positive scale`() {
-        assertFailsWith<IllegalArgumentException> { Transform(ORIGIN, ZERO_ROTATION, Vec3(1.0, 0.0, 1.0)) }
-        assertFailsWith<IllegalArgumentException> { Transform(ORIGIN, ZERO_ROTATION, Vec3(1.0, -1.0, 1.0)) }
+        assertFailsWith<IllegalArgumentException> {
+            Transform(ORIGIN, ZERO_ROTATION, Vec3(1.0, 0.0, 1.0))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            Transform(ORIGIN, ZERO_ROTATION, Vec3(1.0, -1.0, 1.0))
+        }
     }
 
     @Test

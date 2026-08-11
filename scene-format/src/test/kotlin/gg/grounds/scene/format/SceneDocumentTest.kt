@@ -30,47 +30,58 @@ class SceneDocumentTest {
     fun `failure results require non-empty sorted immutable diagnostics`() {
         val later = SceneProblem("/z", SceneProblemCode.INVALID_SCALE, null, "bad")
         val earlier = SceneProblem("/a", SceneProblemCode.INVALID_BOUNDS, null, "bad")
-        assertEquals(listOf(earlier, later), SceneDecodeResult.Failure(listOf(later, earlier)).problems)
+        assertEquals(
+            listOf(earlier, later),
+            SceneDecodeResult.Failure(listOf(later, earlier)).problems,
+        )
         assertFailsWith<IllegalArgumentException> { SceneEncodeResult.Failure(emptyList()) }
     }
 
     @Test
     fun `validation reports whether its diagnostics are empty`() {
         assertTrue(SceneValidationResult(emptyList()).isValid)
-        assertFalse(SceneValidationResult(listOf(SceneProblem("/x", SceneProblemCode.INVALID_SCALE, null, "bad"))).isValid)
+        assertFalse(
+            SceneValidationResult(
+                    listOf(SceneProblem("/x", SceneProblemCode.INVALID_SCALE, null, "bad"))
+                )
+                .isValid
+        )
     }
 
     private fun sceneDocument(
         metadata: SceneMetadata = SceneMetadata("Lobby", null, emptySet()),
         groups: List<SceneGroup> = emptyList(),
         elements: List<SceneElement> = emptyList(),
-    ) = SceneDocument(
-        schemaVersion = 1,
-        id = SceneId("grounds:lobby"),
-        metadata = metadata,
-        catalogs = SceneCatalogReferences(
-            assets = CatalogReference(CatalogId("grounds:assets"), "1"),
-            actions = CatalogReference(CatalogId("grounds:actions"), "1"),
-        ),
-        groups = groups,
-        elements = elements,
-    )
+    ) =
+        SceneDocument(
+            schemaVersion = 1,
+            id = SceneId("grounds:lobby"),
+            metadata = metadata,
+            catalogs =
+                SceneCatalogReferences(
+                    assets = CatalogReference(CatalogId("grounds:assets"), "1"),
+                    actions = CatalogReference(CatalogId("grounds:actions"), "1"),
+                ),
+            groups = groups,
+            elements = elements,
+        )
 }
 
 object CollectionImmutabilityFixtures {
     @JvmStatic
-    fun document(): SceneDocument = SceneDocument(
-        schemaVersion = 1,
-        id = SceneId("grounds:lobby"),
-        metadata = SceneMetadata("Lobby", null, linkedSetOf("z", "a")),
-        catalogs = SceneCatalogReferences(
-            assets = CatalogReference(CatalogId("grounds:assets"), "1"),
-            actions = CatalogReference(CatalogId("grounds:actions"), "1"),
-        ),
-        groups = listOf(group()),
-        elements = emptyList(),
-    )
+    fun document(): SceneDocument =
+        SceneDocument(
+            schemaVersion = 1,
+            id = SceneId("grounds:lobby"),
+            metadata = SceneMetadata("Lobby", null, linkedSetOf("z", "a")),
+            catalogs =
+                SceneCatalogReferences(
+                    assets = CatalogReference(CatalogId("grounds:assets"), "1"),
+                    actions = CatalogReference(CatalogId("grounds:actions"), "1"),
+                ),
+            groups = listOf(group()),
+            elements = emptyList(),
+        )
 
-    @JvmStatic
-    fun group(): SceneGroup = SceneGroup(LocalId("entry"), "Entry")
+    @JvmStatic fun group(): SceneGroup = SceneGroup(LocalId("entry"), "Entry")
 }

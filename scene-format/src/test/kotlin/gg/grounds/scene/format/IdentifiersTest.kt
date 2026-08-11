@@ -22,9 +22,17 @@ class IdentifiersTest {
     @Test
     fun `catalog reference rejects non-printable or whitespace versions`() {
         assertEquals("1.0.0", CatalogReference(CatalogId("grounds:catalog"), "1.0.0").version)
-        assertFailsWith<IllegalArgumentException> { CatalogReference(CatalogId("grounds:catalog"), "") }
-        assertFailsWith<IllegalArgumentException> { CatalogReference(CatalogId("grounds:catalog"), "1 0") }
-        assertFailsWith<IllegalArgumentException> { CatalogReference(CatalogId("grounds:catalog"), "1\n0") }
-        assertFailsWith<IllegalArgumentException> { CatalogReference(CatalogId("grounds:catalog"), "1\u007f") }
+        assertFailsWith<IllegalArgumentException> {
+            CatalogReference(CatalogId("grounds:catalog"), "")
+        }
+        assertFailsWith<IllegalArgumentException> {
+            CatalogReference(CatalogId("grounds:catalog"), "1 0")
+        }
+        assertFailsWith<IllegalArgumentException> {
+            CatalogReference(CatalogId("grounds:catalog"), "1\n0")
+        }
+        assertFailsWith<IllegalArgumentException> {
+            CatalogReference(CatalogId("grounds:catalog"), "1\u007f")
+        }
     }
 }

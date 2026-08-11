@@ -17,7 +17,14 @@ sealed interface LookBehavior {
     }
 }
 
-enum class SceneTrigger { LEFT_CLICK, RIGHT_CLICK, HOVER_ENTER, HOVER_LEAVE, PROXIMITY_ENTER, PROXIMITY_LEAVE }
+enum class SceneTrigger {
+    LEFT_CLICK,
+    RIGHT_CLICK,
+    HOVER_ENTER,
+    HOVER_LEAVE,
+    PROXIMITY_ENTER,
+    PROXIMITY_LEAVE,
+}
 
 data class ProximitySensor(val enterRadius: Double, val exitRadius: Double) {
     init {
@@ -29,7 +36,8 @@ data class ProximitySensor(val enterRadius: Double, val exitRadius: Double) {
 }
 
 @ConsistentCopyVisibility
-data class TriggerBinding private constructor(
+data class TriggerBinding
+private constructor(
     val trigger: SceneTrigger,
     val conditions: List<SceneCondition>,
     val cooldownMillis: Long,
@@ -43,7 +51,14 @@ data class TriggerBinding private constructor(
         cooldownMillis: Long,
         debounceMillis: Long,
         actions: List<SceneAction>,
-    ) : this(trigger, immutableListCopy(conditions), cooldownMillis, debounceMillis, immutableListCopy(actions), Unit)
+    ) : this(
+        trigger,
+        immutableListCopy(conditions),
+        cooldownMillis,
+        debounceMillis,
+        immutableListCopy(actions),
+        Unit,
+    )
 
     init {
         require(cooldownMillis >= 0) { "Cooldown must be non-negative." }
@@ -52,9 +67,17 @@ data class TriggerBinding private constructor(
     }
 }
 
-enum class SceneHand { MAIN, OFF }
+enum class SceneHand {
+    MAIN,
+    OFF,
+}
 
-enum class SceneGameMode { SURVIVAL, CREATIVE, ADVENTURE, SPECTATOR }
+enum class SceneGameMode {
+    SURVIVAL,
+    CREATIVE,
+    ADVENTURE,
+    SPECTATOR,
+}
 
 sealed interface SceneCondition
 

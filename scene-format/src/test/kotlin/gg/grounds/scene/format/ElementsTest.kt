@@ -6,10 +6,11 @@ import kotlin.test.assertEquals
 class ElementsTest {
     @Test
     fun `composite parts retain authored order through an immutable snapshot`() {
-        val parts = mutableListOf(
-            CompositePart(LocalId("lamp"), AssetKey("grounds:lamp"), transform()),
-            CompositePart(LocalId("shade"), AssetKey("grounds:shade"), transform()),
-        )
+        val parts =
+            mutableListOf(
+                CompositePart(LocalId("lamp"), AssetKey("grounds:lamp"), transform()),
+                CompositePart(LocalId("shade"), AssetKey("grounds:shade"), transform()),
+            )
 
         val prop = CompositeProp(LocalId("light"), null, transform(), parts = parts)
         parts.clear()

@@ -3,7 +3,10 @@ package gg.grounds.scene.format
 import gg.grounds.scene.format.internal.immutableListCopy
 import net.kyori.adventure.text.Component
 
-enum class ActivationPolicy { AUTOMATIC, ALWAYS }
+enum class ActivationPolicy {
+    AUTOMATIC,
+    ALWAYS,
+}
 
 sealed interface SceneElement {
     val id: LocalId
@@ -26,7 +29,8 @@ data class Prop(
 data class CompositePart(val id: LocalId, val asset: AssetKey, val transform: Transform)
 
 @ConsistentCopyVisibility
-data class CompositeProp private constructor(
+data class CompositeProp
+private constructor(
     override val id: LocalId,
     override val group: LocalId?,
     override val transform: Transform,
@@ -46,7 +50,8 @@ data class CompositeProp private constructor(
 }
 
 @ConsistentCopyVisibility
-data class Npc private constructor(
+data class Npc
+private constructor(
     override val id: LocalId,
     override val group: LocalId?,
     override val transform: Transform,
@@ -77,7 +82,19 @@ data class Npc private constructor(
         proximity: ProximitySensor?,
         bindings: List<TriggerBinding>,
     ) : this(
-        id, group, transform, visible, activation, body, label, labelOffset, look, initialAnimation,
-        interactionBounds, proximity, immutableListCopy(bindings), Unit,
+        id,
+        group,
+        transform,
+        visible,
+        activation,
+        body,
+        label,
+        labelOffset,
+        look,
+        initialAnimation,
+        interactionBounds,
+        proximity,
+        immutableListCopy(bindings),
+        Unit,
     )
 }

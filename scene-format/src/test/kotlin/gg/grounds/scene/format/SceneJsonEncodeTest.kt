@@ -9,7 +9,9 @@ import kotlin.test.assertTrue
 class SceneJsonEncodeTest {
     @Test
     fun `canonical bytes use the hand derived wire layout and one newline`() {
-        val scene = assertIs<SceneDecodeResult.Success>(SceneJson.decode(validJson().encodeToByteArray())).scene
+        val scene =
+            assertIs<SceneDecodeResult.Success>(SceneJson.decode(validJson().encodeToByteArray()))
+                .scene
 
         val bytes = assertIs<SceneEncodeResult.Success>(SceneJson.encode(scene)).bytes
         val text = bytes.decodeToString()
@@ -23,8 +25,18 @@ class SceneJsonEncodeTest {
 
     @Test
     fun `encode returns all intrinsic problems without bytes`() {
-        val valid = assertIs<SceneDecodeResult.Success>(SceneJson.decode(validJson().encodeToByteArray())).scene
-        val invalid = SceneDocument(valid.schemaVersion, valid.id, valid.metadata, valid.catalogs, valid.groups, valid.elements + valid.elements)
+        val valid =
+            assertIs<SceneDecodeResult.Success>(SceneJson.decode(validJson().encodeToByteArray()))
+                .scene
+        val invalid =
+            SceneDocument(
+                valid.schemaVersion,
+                valid.id,
+                valid.metadata,
+                valid.catalogs,
+                valid.groups,
+                valid.elements + valid.elements,
+            )
 
         val result = assertIs<SceneEncodeResult.Failure>(SceneJson.encode(invalid))
 
@@ -33,13 +45,19 @@ class SceneJsonEncodeTest {
 
     @Test
     fun `canonical strings preserve isolated surrogates and valid supplementary pairs`() {
-        val base = assertIs<SceneDecodeResult.Success>(SceneJson.decode(validJson().encodeToByteArray())).scene
+        val base =
+            assertIs<SceneDecodeResult.Success>(SceneJson.decode(validJson().encodeToByteArray()))
+                .scene
         val source = "high\uD800 low\uDC00 pair\uD83D\uDE00"
-        val scene = SceneDocument(
-            base.schemaVersion, base.id,
-            SceneMetadata(source, base.metadata.description, base.metadata.tags),
-            base.catalogs, base.groups, base.elements,
-        )
+        val scene =
+            SceneDocument(
+                base.schemaVersion,
+                base.id,
+                SceneMetadata(source, base.metadata.description, base.metadata.tags),
+                base.catalogs,
+                base.groups,
+                base.elements,
+            )
 
         val bytes = assertIs<SceneEncodeResult.Success>(SceneJson.encode(scene)).bytes
         val text = bytes.decodeToString()
@@ -51,7 +69,8 @@ class SceneJsonEncodeTest {
     }
 }
 
-internal fun expectedPropScene() = """
+internal fun expectedPropScene() =
+    """
     {
       "schemaVersion": 1,
       "id": "test:scene",
@@ -100,4 +119,5 @@ internal fun expectedPropScene() = """
         }
       ]
     }
-""".trimIndent() + "\n"
+    """
+        .trimIndent() + "\n"

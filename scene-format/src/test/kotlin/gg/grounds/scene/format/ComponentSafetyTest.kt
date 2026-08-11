@@ -12,21 +12,29 @@ import net.kyori.adventure.text.event.HoverEvent
 class ComponentSafetyTest {
     @Test
     fun `nested child translatable argument and separator events are rejected at stable paths`() {
-        val component = Component.text("root").append(
-            Component.text("child").clickEvent(ClickEvent.runCommand("/op @s")).insertion("payload"),
-        ).append(
-            Component.translatable(
-                "grounds.greeting",
-                Component.text("argument").hoverEvent(HoverEvent.showText(Component.text("hover"))),
-            ),
-        ).append(
-            Component.selector()
-                .pattern("@a")
-                .separator(Component.text(",").insertion("separator"))
-                .build(),
-        )
+        val component =
+            Component.text("root")
+                .append(
+                    Component.text("child")
+                        .clickEvent(ClickEvent.runCommand("/op @s"))
+                        .insertion("payload")
+                )
+                .append(
+                    Component.translatable(
+                        "grounds.greeting",
+                        Component.text("argument")
+                            .hoverEvent(HoverEvent.showText(Component.text("hover"))),
+                    )
+                )
+                .append(
+                    Component.selector()
+                        .pattern("@a")
+                        .separator(Component.text(",").insertion("separator"))
+                        .build()
+                )
 
-        val problems = ComponentSafety.findProblems(component, "/elements/0/label", "grounds:lobby#npc")
+        val problems =
+            ComponentSafety.findProblems(component, "/elements/0/label", "grounds:lobby#npc")
 
         assertEquals(
             listOf(
@@ -43,11 +51,12 @@ class ComponentSafetyTest {
 
     @Test
     fun `text translation colour decoration font and children are accepted`() {
-        val component = Component.text("root")
-            .color(net.kyori.adventure.text.format.NamedTextColor.GOLD)
-            .decorate(net.kyori.adventure.text.format.TextDecoration.BOLD)
-            .font(net.kyori.adventure.key.Key.key("grounds:display"))
-            .append(Component.translatable("grounds.greeting", Component.text("friend")))
+        val component =
+            Component.text("root")
+                .color(net.kyori.adventure.text.format.NamedTextColor.GOLD)
+                .decorate(net.kyori.adventure.text.format.TextDecoration.BOLD)
+                .font(net.kyori.adventure.key.Key.key("grounds:display"))
+                .append(Component.translatable("grounds.greeting", Component.text("friend")))
 
         assertTrue(ComponentSafety.findProblems(component, "/label", null).isEmpty())
     }

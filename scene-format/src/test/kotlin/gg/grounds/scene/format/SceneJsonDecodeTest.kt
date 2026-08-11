@@ -9,7 +9,8 @@ class SceneJsonDecodeTest {
     @Test
     fun `decode classifies strict parser failures without exception-message matching`() {
         assertFailure(
-            validJson().replace("\"id\":\"test:scene\"", "\"id\":\"test:scene\",\"id\":\"test:other\""),
+            validJson()
+                .replace("\"id\":\"test:scene\"", "\"id\":\"test:scene\",\"id\":\"test:other\""),
             SceneProblemCode.DUPLICATE_FIELD,
             "/id",
         )
@@ -84,7 +85,9 @@ class SceneJsonDecodeTest {
             "$actionPath/text",
         )
         assertFailure(
-            npcScene(action = """{"type":"send_message","message":{"text":"hello","rogue":true}}"""),
+            npcScene(
+                action = """{"type":"send_message","message":{"text":"hello","rogue":true}}"""
+            ),
             SceneProblemCode.UNKNOWN_FIELD,
             "$actionPath/rogue",
         )
@@ -95,16 +98,19 @@ class SceneJsonDecodeTest {
         )
 
         listOf(
-            """{"text":"click","click_event":{"action":"run_command","command":"/say hi"}}""",
-            """{"text":"hover","hover_event":{"action":"show_text","contents":{"text":"details"}}}""",
-            """{"text":"insert","insertion":"unsafe"}""",
-        ).forEach { component ->
-            val result = SceneJson.decode(
-                npcScene(action = """{"type":"send_message","message":$component}""").encodeToByteArray(),
+                """{"text":"click","click_event":{"action":"run_command","command":"/say hi"}}""",
+                """{"text":"hover","hover_event":{"action":"show_text","contents":{"text":"details"}}}""",
+                """{"text":"insert","insertion":"unsafe"}""",
             )
-            assertIs<SceneDecodeResult.Failure>(result)
-            assertEquals(SceneProblemCode.FORBIDDEN_TEXT_EVENT, result.problems.single().code)
-        }
+            .forEach { component ->
+                val result =
+                    SceneJson.decode(
+                        npcScene(action = """{"type":"send_message","message":$component}""")
+                            .encodeToByteArray()
+                    )
+                assertIs<SceneDecodeResult.Failure>(result)
+                assertEquals(SceneProblemCode.FORBIDDEN_TEXT_EVENT, result.problems.single().code)
+            }
     }
 
     @Test
@@ -113,7 +119,8 @@ class SceneJsonDecodeTest {
         listOf("id", "payload").forEach { field ->
             assertFailure(
                 npcScene(
-                    action = """{"type":"send_message","message":{"text":"unsafe","click_event":{"action":"run_command","$field":"ignored"}}}""",
+                    action =
+                        """{"type":"send_message","message":{"text":"unsafe","click_event":{"action":"run_command","$field":"ignored"}}}"""
                 ),
                 SceneProblemCode.UNKNOWN_FIELD,
                 "$eventPath/$field",
@@ -122,7 +129,8 @@ class SceneJsonDecodeTest {
         listOf("open_file", "future_action").forEach { action ->
             assertFailure(
                 npcScene(
-                    action = """{"type":"send_message","message":{"text":"unsafe","click_event":{"action":"$action","path":"/tmp/file"}}}""",
+                    action =
+                        """{"type":"send_message","message":{"text":"unsafe","click_event":{"action":"$action","path":"/tmp/file"}}}"""
                 ),
                 SceneProblemCode.UNKNOWN_TYPE,
                 "$eventPath/action",
@@ -133,36 +141,47 @@ class SceneJsonDecodeTest {
     @Test
     fun `every accepted Adventure click shape materializes for intrinsic rejection`() {
         listOf(
-            """{"action":"copy_to_clipboard","value":"copy"}""",
-            """{"action":"open_url","url":"https://example.com"}""",
-            """{"action":"run_command","path":"/recognized-by-gson"}""",
-            """{"action":"suggest_command","command":"/say hi"}""",
-            """{"action":"change_page","page":2}""",
-        ).forEach { event ->
-            val result = SceneJson.decode(
-                npcScene(
-                    action = """{"type":"send_message","message":{"text":"unsafe","click_event":$event}}""",
-                ).encodeToByteArray(),
+                """{"action":"copy_to_clipboard","value":"copy"}""",
+                """{"action":"open_url","url":"https://example.com"}""",
+                """{"action":"run_command","path":"/recognized-by-gson"}""",
+                """{"action":"suggest_command","command":"/say hi"}""",
+                """{"action":"change_page","page":2}""",
             )
-            assertIs<SceneDecodeResult.Failure>(result)
-            assertEquals(SceneProblemCode.FORBIDDEN_TEXT_EVENT, result.problems.single().code)
-        }
+            .forEach { event ->
+                val result =
+                    SceneJson.decode(
+                        npcScene(
+                                action =
+                                    """{"type":"send_message","message":{"text":"unsafe","click_event":$event}}"""
+                            )
+                            .encodeToByteArray()
+                    )
+                assertIs<SceneDecodeResult.Failure>(result)
+                assertEquals(SceneProblemCode.FORBIDDEN_TEXT_EVENT, result.problems.single().code)
+            }
     }
 
     @Test
     fun `Adventure four-number shadow color array decodes as safe rich text`() {
-        val result = SceneJson.decode(
-            npcScene(
-                action = """{"type":"send_message","message":{"text":"shadowed","shadow_color":[1.0,0.5,0.25,0.75]}}""",
-            ).encodeToByteArray(),
-        )
+        val result =
+            SceneJson.decode(
+                npcScene(
+                        action =
+                            """{"type":"send_message","message":{"text":"shadowed","shadow_color":[1.0,0.5,0.25,0.75]}}"""
+                    )
+                    .encodeToByteArray()
+            )
         assertIs<SceneDecodeResult.Success>(result)
     }
 
     @Test
     fun `Adventure packed shadow color follows Gson integer-valued numeric coercion`() {
-        assertIs<SceneDecodeResult.Success>(SceneJson.decode(sceneWithPackedShadowColor("1.0").encodeToByteArray()))
-        assertIs<SceneDecodeResult.Success>(SceneJson.decode(sceneWithPackedShadowColor("1e0").encodeToByteArray()))
+        assertIs<SceneDecodeResult.Success>(
+            SceneJson.decode(sceneWithPackedShadowColor("1.0").encodeToByteArray())
+        )
+        assertIs<SceneDecodeResult.Success>(
+            SceneJson.decode(sceneWithPackedShadowColor("1e0").encodeToByteArray())
+        )
         assertFailure(
             sceneWithPackedShadowColor("1.5"),
             SceneProblemCode.MALFORMED_JSON,
@@ -187,7 +206,12 @@ class SceneJsonDecodeTest {
         val npc = assertIs<Npc>(scene.elements[3])
         assertIs<LookBehavior.TrackNearest>(npc.look)
         assertEquals(
-            listOf(HandCondition::class, SneakingCondition::class, PermissionCondition::class, GameModeCondition::class),
+            listOf(
+                HandCondition::class,
+                SneakingCondition::class,
+                PermissionCondition::class,
+                GameModeCondition::class,
+            ),
             npc.bindings.single().conditions.map { it::class },
         )
         assertEquals(
@@ -230,9 +254,11 @@ class SceneJsonDecodeTest {
     private fun assertFailure(json: String, code: SceneProblemCode, path: String) =
         assertFailure(json.encodeToByteArray(), code, path)
 
-    private fun sceneWithPackedShadowColor(value: String) = npcScene(
-        action = """{"type":"send_message","message":{"text":"shadowed","shadow_color":$value}}""",
-    )
+    private fun sceneWithPackedShadowColor(value: String) =
+        npcScene(
+            action =
+                """{"type":"send_message","message":{"text":"shadowed","shadow_color":$value}}"""
+        )
 
     private fun assertFailure(bytes: ByteArray, code: SceneProblemCode, path: String) {
         val result = SceneJson.decode(bytes)
@@ -242,14 +268,17 @@ class SceneJsonDecodeTest {
     }
 }
 
-internal fun validJson() = """{"schemaVersion":1,"id":"test:scene","metadata":{"name":"Scene","description":null,"tags":[]},"catalogs":{"assets":{"id":"test:assets","version":"1"},"actions":{"id":"test:actions","version":"1"}},"groups":[],"elements":[{"type":"prop","id":"prop","group":null,"transform":${transformJson()},"visible":true,"activation":"AUTOMATIC","asset":"test:prop","initialAnimation":null}]}"""
+internal fun validJson() =
+    """{"schemaVersion":1,"id":"test:scene","metadata":{"name":"Scene","description":null,"tags":[]},"catalogs":{"assets":{"id":"test:assets","version":"1"},"actions":{"id":"test:actions","version":"1"}},"groups":[],"elements":[{"type":"prop","id":"prop","group":null,"transform":${transformJson()},"visible":true,"activation":"AUTOMATIC","asset":"test:prop","initialAnimation":null}]}"""
 
 internal fun npcScene(
     action: String = """{"type":"send_message","message":{"text":"hello"}}""",
     conditions: String = "[]",
-) = """{"schemaVersion":1,"id":"test:scene","metadata":{"name":"Scene","description":null,"tags":[]},"catalogs":{"assets":{"id":"test:assets","version":"1"},"actions":{"id":"test:actions","version":"1"}},"groups":[],"elements":[{"type":"npc","id":"npc","group":null,"transform":${transformJson()},"visible":true,"activation":"AUTOMATIC","body":"test:npc","label":{"text":"Guide"},"labelOffset":{"x":0.0,"y":1.0,"z":0.0},"look":{"type":"fixed"},"initialAnimation":null,"interactionBounds":{"center":{"x":0.0,"y":1.0,"z":0.0},"size":{"x":1.0,"y":2.0,"z":1.0}},"proximity":null,"bindings":[{"trigger":"RIGHT_CLICK","conditions":$conditions,"cooldownMillis":0,"debounceMillis":0,"actions":[$action]}]}]}"""
+) =
+    """{"schemaVersion":1,"id":"test:scene","metadata":{"name":"Scene","description":null,"tags":[]},"catalogs":{"assets":{"id":"test:assets","version":"1"},"actions":{"id":"test:actions","version":"1"}},"groups":[],"elements":[{"type":"npc","id":"npc","group":null,"transform":${transformJson()},"visible":true,"activation":"AUTOMATIC","body":"test:npc","label":{"text":"Guide"},"labelOffset":{"x":0.0,"y":1.0,"z":0.0},"look":{"type":"fixed"},"initialAnimation":null,"interactionBounds":{"center":{"x":0.0,"y":1.0,"z":0.0},"size":{"x":1.0,"y":2.0,"z":1.0}},"proximity":null,"bindings":[{"trigger":"RIGHT_CLICK","conditions":$conditions,"cooldownMillis":0,"debounceMillis":0,"actions":[$action]}]}]}"""
 
-internal fun completeJson() = """
+internal fun completeJson() =
+    """
     {
       "schemaVersion": 1,
       "id": "test:complete",
@@ -290,6 +319,8 @@ internal fun completeJson() = """
         }]}
       ]
     }
-""".trimIndent()
+"""
+        .trimIndent()
 
-internal fun transformJson() = """{"position":{"x":0.0,"y":0.0,"z":0.0},"rotation":{"yaw":0.0,"pitch":0.0,"roll":0.0},"scale":{"x":1.0,"y":1.0,"z":1.0}}"""
+internal fun transformJson() =
+    """{"position":{"x":0.0,"y":0.0,"z":0.0},"rotation":{"yaw":0.0,"pitch":0.0,"roll":0.0},"scale":{"x":1.0,"y":1.0,"z":1.0}}"""

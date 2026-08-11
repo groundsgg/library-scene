@@ -12,7 +12,8 @@ data class StartAnimationAction(val target: ElementTarget, val animation: LocalI
 
 data class StopAnimationAction(val target: ElementTarget, val animation: LocalId?) : SceneAction
 
-data class PlaySoundAction(val sound: AssetKey, val volume: Double, val pitch: Double) : SceneAction {
+data class PlaySoundAction(val sound: AssetKey, val volume: Double, val pitch: Double) :
+    SceneAction {
     init {
         requirePositiveFinite(volume, "Sound volume")
         requirePositiveFinite(pitch, "Sound pitch")
@@ -35,7 +36,9 @@ data class SetViewerHighlightAction(
     val enabled: Boolean,
     val transitionMillis: Long,
 ) : SceneAction {
-    init { requireNonNegativeMillis(transitionMillis, "Viewer highlight transition") }
+    init {
+        requireNonNegativeMillis(transitionMillis, "Viewer highlight transition")
+    }
 }
 
 data class SendMessageAction(val message: Component) : SceneAction
@@ -84,12 +87,16 @@ data class EnumArgument(val value: LocalId) : ApplicationArgument
 data class AssetArgument(val value: AssetKey) : ApplicationArgument
 
 @ConsistentCopyVisibility
-data class ApplicationAction private constructor(
+data class ApplicationAction
+private constructor(
     val key: ActionKey,
     val arguments: Map<LocalId, ApplicationArgument>,
     @Suppress("unused") private val canonical: Unit,
 ) : SceneAction {
-    constructor(key: ActionKey, arguments: Map<LocalId, ApplicationArgument>) : this(key, immutableMapCopy(arguments), Unit)
+    constructor(
+        key: ActionKey,
+        arguments: Map<LocalId, ApplicationArgument>,
+    ) : this(key, immutableMapCopy(arguments), Unit)
 }
 
 private fun requireNonNegativeMillis(value: Long, name: String) {
