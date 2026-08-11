@@ -1,8 +1,5 @@
 package gg.grounds.scene.format
 
-import gg.grounds.scene.format.internal.immutableListCopy
-import gg.grounds.scene.format.internal.immutableSetCopy
-
 @ConsistentCopyVisibility
 data class SceneMetadata
 private constructor(

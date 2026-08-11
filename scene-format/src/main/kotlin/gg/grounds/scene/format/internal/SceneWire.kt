@@ -1,4 +1,4 @@
-package gg.grounds.scene.format.internal
+package gg.grounds.scene.format
 
 import java.math.BigDecimal
 import tools.jackson.databind.JsonNode

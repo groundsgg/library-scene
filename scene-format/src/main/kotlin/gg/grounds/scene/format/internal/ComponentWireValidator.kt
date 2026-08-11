@@ -1,4 +1,4 @@
-package gg.grounds.scene.format.internal
+package gg.grounds.scene.format
 
 import tools.jackson.databind.JsonNode
 

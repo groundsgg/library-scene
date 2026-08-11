@@ -1,6 +1,5 @@
 package gg.grounds.scene.format
 
-import gg.grounds.scene.format.internal.immutableListCopy
 import net.kyori.adventure.text.Component
 
 enum class ActivationPolicy {

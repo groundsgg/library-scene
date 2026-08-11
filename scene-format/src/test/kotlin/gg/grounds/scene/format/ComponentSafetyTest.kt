@@ -1,7 +1,6 @@
 package gg.grounds.scene.format
 
 import gg.grounds.scene.format.SceneProblemCode.FORBIDDEN_TEXT_EVENT
-import gg.grounds.scene.format.internal.ComponentSafety
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue

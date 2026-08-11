@@ -1,4 +1,4 @@
-package gg.grounds.scene.format.internal
+package gg.grounds.scene.format
 
 import java.nio.ByteBuffer
 import java.nio.charset.CharacterCodingException

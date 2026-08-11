@@ -5,6 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes.ACC_BRIDGE
+import org.objectweb.asm.Opcodes.ACC_PRIVATE
 import org.objectweb.asm.Opcodes.ACC_PUBLIC
 import org.objectweb.asm.Opcodes.ACC_SUPER
 import org.objectweb.asm.Opcodes.ACC_SYNTHETIC
@@ -156,6 +157,108 @@ class AbiBoundaryMutationTest {
             .forEach { assertUnexpectedClass(it, ACC_PUBLIC) }
     }
 
+    @Test
+    fun `effective JVM reachability rejects every callable implementation member`() {
+        val publicConstructor =
+            decoy("gg/grounds/scene/format/internal/PublicHelper") {
+                visitMethod(ACC_PUBLIC, "<init>", "()V", null, null)
+            }
+        val failure =
+            assertFailsWith<AssertionError> {
+                AbiBoundary.assertNoReachableImplementationSurface(
+                    mapOf("PublicHelper.class" to publicConstructor),
+                    emptySet(),
+                )
+            }
+        assertEquals(
+            "Externally reachable implementation member: " +
+                "METHOD gg.grounds.scene.format.internal.PublicHelper.<init>()V signature=- exceptions=[]",
+            failure.message,
+        )
+
+        AbiBoundary.assertNoReachableImplementationSurface(
+            mapOf(
+                "InertFacade.class" to decoy("gg/grounds/scene/format/InertFacade"),
+                "PackageHelper.class" to
+                    decoy("gg/grounds/scene/format/PackageHelper", access = ACC_SUPER) {
+                        visitMethod(ACC_PUBLIC, "call", "()V", null, null)
+                    },
+                "PrivateNested.class" to privateNestedDecoy(),
+            ),
+            emptySet(),
+        )
+    }
+
+    @Test
+    fun `reachable Jackson signatures and synthetic methods have no exemption`() {
+        val jackson =
+            decoy("gg/grounds/scene/format/Approved") {
+                visitMethod(
+                    ACC_PUBLIC,
+                    "mapper",
+                    "()Ltools/jackson/databind/ObjectMapper;",
+                    null,
+                    null,
+                )
+            }
+        val jacksonFailure =
+            assertFailsWith<AssertionError> {
+                AbiBoundary.assertNoReachableImplementationSurface(
+                    mapOf("Approved.class" to jackson),
+                    setOf("gg.grounds.scene.format.Approved"),
+                )
+            }
+        assertEquals(
+            "Reachable forbidden type: METHOD gg.grounds.scene.format.Approved.mapper()" +
+                "Ltools/jackson/databind/ObjectMapper; signature=- exceptions=[]",
+            jacksonFailure.message,
+        )
+
+        val synthetic =
+            decoy("gg/grounds/scene/format/internal/SyntheticHelper") {
+                visitMethod(ACC_PUBLIC or ACC_SYNTHETIC, "call", "()V", null, null)
+            }
+        val syntheticFailure =
+            assertFailsWith<AssertionError> {
+                AbiBoundary.assertNoReachableImplementationSurface(
+                    mapOf("SyntheticHelper.class" to synthetic),
+                    emptySet(),
+                )
+            }
+        assertEquals(
+            "Externally reachable implementation member: " +
+                "METHOD gg.grounds.scene.format.internal.SyntheticHelper.call()V signature=- exceptions=[]",
+            syntheticFailure.message,
+        )
+    }
+
+    @Test
+    fun `missing enclosing owner metadata fails closed`() {
+        val nested =
+            decoy("gg/grounds/scene/format/MissingOuter\$Nested") {
+                visitInnerClass(
+                    "gg/grounds/scene/format/MissingOuter\$Nested",
+                    "gg/grounds/scene/format/MissingOuter",
+                    "Nested",
+                    ACC_PUBLIC,
+                )
+                visitMethod(ACC_PUBLIC, "call", "()V", null, null)
+            }
+        val failure =
+            assertFailsWith<AssertionError> {
+                AbiBoundary.assertNoReachableImplementationSurface(
+                    mapOf("MissingOuter\$Nested.class" to nested),
+                    emptySet(),
+                )
+            }
+        assertEquals(
+            "Externally reachable implementation member: " +
+                "METHOD gg.grounds.scene.format.MissingOuter\$Nested.call()V " +
+                "signature=- exceptions=[]",
+            failure.message,
+        )
+    }
+
     private fun assertUnexpectedClass(internalName: String, access: Int) {
         val failure =
             assertFailsWith<AssertionError> {
@@ -201,6 +304,21 @@ class AbiBoundaryMutationTest {
         ClassWriter(0).run {
             visit(V25, access, internalName, classSignature, "java/lang/Object", null)
             mutate()
+            visitEnd()
+            toByteArray()
+        }
+
+    private fun privateNestedDecoy(): ByteArray =
+        ClassWriter(0).run {
+            val internalName = "gg/grounds/scene/format/PublicOuter\$PrivateNested"
+            visit(V25, ACC_PUBLIC or ACC_SUPER, internalName, null, "java/lang/Object", null)
+            visitInnerClass(
+                internalName,
+                "gg/grounds/scene/format/PublicOuter",
+                "PrivateNested",
+                ACC_PRIVATE,
+            )
+            visitMethod(ACC_PUBLIC, "call", "()V", null, null)
             visitEnd()
             toByteArray()
         }

@@ -1,6 +1,5 @@
 package gg.grounds.scene.format
 
-import gg.grounds.scene.format.internal.immutableMapCopy
 import java.math.BigDecimal
 import net.kyori.adventure.text.Component
 
@@ -107,7 +106,7 @@ private fun requireNonNegativeMillis(value: Long, name: String) {
     require(value >= 0) { "$name must be non-negative." }
 }
 
-internal fun requireCanonicalDecimal(value: BigDecimal): BigDecimal {
+private fun requireCanonicalDecimal(value: BigDecimal): BigDecimal {
     val canonical = value.stripTrailingZeros()
     val precision = canonical.precision().toLong()
     val scale = canonical.scale().toLong()

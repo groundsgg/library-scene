@@ -1,8 +1,5 @@
 package gg.grounds.scene.format
 
-import gg.grounds.scene.format.internal.CatalogValidator
-import gg.grounds.scene.format.internal.IntrinsicValidator
-
 object SceneValidation {
     fun validateIntrinsic(scene: SceneDocument): SceneValidationResult =
         SceneValidationResult(

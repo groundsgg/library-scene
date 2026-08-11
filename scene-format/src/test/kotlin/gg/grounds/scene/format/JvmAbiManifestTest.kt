@@ -12,6 +12,7 @@ class JvmPublicSurfaceJavaTest {
         val expectedPublicApi = manifest("/abi/kotlin-public-classes.txt")
         val expectedAbi = manifest("/abi/public-abi.txt")
 
+        AbiBoundary.assertNoReachableImplementationSurface(classFiles, expectedPublicApi)
         AbiBoundary.assertExactKotlinPublicClasses(classFiles, expectedPublicApi)
         AbiBoundary.assertExact(classFiles, expectedEntries, expectedPublicApi, expectedAbi)
     }

@@ -1,10 +1,5 @@
 package gg.grounds.scene.format
 
-import gg.grounds.scene.format.internal.CanonicalJson
-import gg.grounds.scene.format.internal.DecodeFailure
-import gg.grounds.scene.format.internal.SceneMapper
-import gg.grounds.scene.format.internal.WireMapping
-
 object SceneJson {
     fun encode(scene: SceneDocument): SceneEncodeResult {
         val problems = SceneValidation.validateIntrinsic(scene).problems

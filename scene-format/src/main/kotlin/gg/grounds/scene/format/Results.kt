@@ -1,7 +1,5 @@
 package gg.grounds.scene.format
 
-import gg.grounds.scene.format.internal.immutableListCopy
-
 sealed interface SceneDecodeResult {
     data class Success(val scene: SceneDocument) : SceneDecodeResult
 

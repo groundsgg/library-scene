@@ -1,6 +1,5 @@
-package gg.grounds.scene.format.internal
+package gg.grounds.scene.format
 
-import gg.grounds.scene.format.requireCanonicalDecimal
 import java.math.BigDecimal
 import java.nio.charset.StandardCharsets
 import tools.jackson.databind.JsonNode
@@ -426,6 +425,6 @@ internal object CanonicalJson {
         if (value.signum() == 0) {
             "0"
         } else {
-            requireCanonicalDecimal(value).stripTrailingZeros().toPlainString()
+            value.stripTrailingZeros().toPlainString()
         }
 }

@@ -1,6 +1,5 @@
-package gg.grounds.scene.format.internal
+package gg.grounds.scene.format
 
-import gg.grounds.scene.format.*
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.serializer.gson.GsonComponentSerializer
 import tools.jackson.databind.JsonNode

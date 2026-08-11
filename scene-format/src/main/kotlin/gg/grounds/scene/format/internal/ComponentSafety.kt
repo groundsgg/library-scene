@@ -1,7 +1,5 @@
-package gg.grounds.scene.format.internal
+package gg.grounds.scene.format
 
-import gg.grounds.scene.format.SceneProblem
-import gg.grounds.scene.format.SceneProblemCode
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.ComponentIteratorFlag
 import net.kyori.adventure.text.ComponentIteratorType

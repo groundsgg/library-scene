@@ -1,6 +1,4 @@
-package gg.grounds.scene.format.internal
-
-import gg.grounds.scene.format.*
+package gg.grounds.scene.format
 
 internal object IntrinsicValidator {
     private const val MAX_GROUPS = 4_096

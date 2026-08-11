@@ -1,7 +1,5 @@
 package gg.grounds.scene.format
 
-import gg.grounds.scene.format.internal.immutableListCopy
-
 sealed interface LookBehavior {
     data object Fixed : LookBehavior
 

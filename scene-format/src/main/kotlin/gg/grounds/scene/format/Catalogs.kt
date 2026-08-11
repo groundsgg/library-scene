@@ -1,7 +1,5 @@
 package gg.grounds.scene.format
 
-import gg.grounds.scene.format.internal.immutableMapCopy
-import gg.grounds.scene.format.internal.immutableSetCopy
 import java.math.BigDecimal
 
 enum class AssetKind {

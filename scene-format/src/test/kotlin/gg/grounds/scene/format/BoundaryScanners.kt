@@ -86,6 +86,45 @@ internal object DependencyBoundary {
 }
 
 internal object AbiBoundary {
+    fun assertNoReachableImplementationSurface(
+        classFiles: Map<String, ByteArray>,
+        approvedPublicApiClasses: Set<String>,
+    ) {
+        val classes =
+            classFiles.values.associate { bytes ->
+                val surface = reachableSurface(bytes)
+                surface.name to surface
+            }
+
+        fun isExternallyReachable(
+            name: String,
+            visiting: MutableSet<String> = mutableSetOf(),
+        ): Boolean {
+            val surface = classes[name] ?: return true
+            if (!isPublicOrProtected(surface.access)) return false
+            if (!visiting.add(name)) return true
+            val outer = surface.outerName ?: return true
+            return isPublicOrProtected(surface.innerAccess ?: 0) &&
+                isExternallyReachable(outer, visiting)
+        }
+
+        val reachableRecords =
+            classes.values
+                .filter { it.name in approvedPublicApiClasses || isExternallyReachable(it.name) }
+                .flatMap { surface -> listOf(surface.classRecord) + surface.members }
+                .sorted()
+        reachableRecords
+            .firstOrNull { "tools/jackson/" in it || "tools.jackson." in it }
+            ?.let { throw AssertionError("Reachable forbidden type: $it") }
+
+        classes.values
+            .filter { it.name !in approvedPublicApiClasses && isExternallyReachable(it.name) }
+            .flatMap { it.members }
+            .sorted()
+            .firstOrNull()
+            ?.let { throw AssertionError("Externally reachable implementation member: $it") }
+    }
+
     fun assertExact(
         classFiles: Map<String, ByteArray>,
         expectedClassEntries: Set<String>,
@@ -194,6 +233,78 @@ internal object AbiBoundary {
                 ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES,
             )
         return lines
+    }
+
+    private fun reachableSurface(bytes: ByteArray): ReachableSurface {
+        lateinit var name: String
+        var access = 0
+        var classRecord = ""
+        var outerName: String? = null
+        var innerAccess: Int? = null
+        val members = sortedSetOf<String>()
+        ClassReader(bytes)
+            .accept(
+                object : ClassVisitor(Opcodes.ASM9) {
+                    override fun visit(
+                        version: Int,
+                        classAccess: Int,
+                        internalName: String,
+                        signature: String?,
+                        superName: String?,
+                        interfaces: Array<out String>,
+                    ) {
+                        name = internalName.replace('/', '.')
+                        access = classAccess
+                        classRecord =
+                            "CLASS $name signature=${signature ?: "-"} " +
+                                "super=${superName?.replace('/', '.') ?: "-"} " +
+                                "interfaces=${interfaces.map { it.replace('/', '.') }}"
+                    }
+
+                    override fun visitInnerClass(
+                        innerInternalName: String,
+                        outerInternalName: String?,
+                        innerName: String?,
+                        innerClassAccess: Int,
+                    ) {
+                        if (innerInternalName.replace('/', '.') == name) {
+                            outerName = outerInternalName?.replace('/', '.')
+                            innerAccess = innerClassAccess
+                        }
+                    }
+
+                    override fun visitField(
+                        fieldAccess: Int,
+                        fieldName: String,
+                        descriptor: String,
+                        signature: String?,
+                        value: Any?,
+                    ): FieldVisitor? {
+                        if (isPublicOrProtected(fieldAccess)) {
+                            members +=
+                                "FIELD $name.$fieldName $descriptor signature=${signature ?: "-"}"
+                        }
+                        return null
+                    }
+
+                    override fun visitMethod(
+                        methodAccess: Int,
+                        methodName: String,
+                        descriptor: String,
+                        signature: String?,
+                        exceptions: Array<out String>?,
+                    ): MethodVisitor? {
+                        if (isPublicOrProtected(methodAccess)) {
+                            members +=
+                                "METHOD $name.$methodName$descriptor signature=${signature ?: "-"} " +
+                                    "exceptions=${exceptions.orEmpty().map { it.replace('/', '.') }}"
+                        }
+                        return null
+                    }
+                },
+                ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES,
+            )
+        return ReachableSurface(name, access, outerName, innerAccess, classRecord, members)
     }
 
     private fun isKotlinPublic(binaryName: String, bytes: ByteArray): Boolean {
@@ -334,4 +445,13 @@ internal object AbiBoundary {
             Opcodes.ACC_STRICT to "strict",
             Opcodes.ACC_SYNTHETIC to "synthetic",
         )
+
+    private data class ReachableSurface(
+        val name: String,
+        val access: Int,
+        val outerName: String?,
+        val innerAccess: Int?,
+        val classRecord: String,
+        val members: Set<String>,
+    )
 }
