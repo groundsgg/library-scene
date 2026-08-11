@@ -1,6 +1,7 @@
 package gg.grounds.scene.format.internal
 
 import java.math.BigDecimal
+import tools.jackson.databind.JsonNode
 
 /** Internal, explicit JSON representation. Its discriminator strings are part of Scene v1. */
 internal data class SceneWire(val schemaVersion: Int, val id: String, val metadata: MetadataWire, val catalogs: CatalogsWire, val groups: List<GroupWire>, val elements: List<ElementWire>)
@@ -16,7 +17,7 @@ internal sealed interface ElementWire { val type: String; val id: String; val gr
 internal data class PropWire(override val id: String, override val group: String?, override val transform: TransformWire, override val visible: Boolean, override val activation: String, val asset: String, val initialAnimation: String?) : ElementWire { override val type = "prop" }
 internal data class CompositePartWire(val id: String, val asset: String, val transform: TransformWire)
 internal data class CompositePropWire(override val id: String, override val group: String?, override val transform: TransformWire, override val visible: Boolean, override val activation: String, val parts: List<CompositePartWire>) : ElementWire { override val type = "composite_prop" }
-internal data class NpcWire(override val id: String, override val group: String?, override val transform: TransformWire, override val visible: Boolean, override val activation: String, val body: String, val label: String?, val labelOffset: Vec3Wire, val look: LookWire, val initialAnimation: String?, val interactionBounds: BoundsWire, val proximity: ProximityWire?, val bindings: List<BindingWire>) : ElementWire { override val type = "npc" }
+internal data class NpcWire(override val id: String, override val group: String?, override val transform: TransformWire, override val visible: Boolean, override val activation: String, val body: String, val label: JsonNode?, val labelOffset: Vec3Wire, val look: LookWire, val initialAnimation: String?, val interactionBounds: BoundsWire, val proximity: ProximityWire?, val bindings: List<BindingWire>) : ElementWire { override val type = "npc" }
 internal sealed interface LookWire { val type: String }
 internal data object FixedLookWire : LookWire { override val type = "fixed" }
 internal data class TrackNearestLookWire(val maxDistance: Double, val yawOnly: Boolean, val maxTurnDegreesPerSecond: Double) : LookWire { override val type = "track_nearest" }
@@ -33,9 +34,9 @@ internal data class StopAnimationWire(val target: TargetWire, val animation: Str
 internal data class PlaySoundWire(val sound: String, val volume: Double, val pitch: Double) : ActionWire { override val type = "play_sound" }
 internal data class SetViewerScaleWire(val target: TargetWire, val multiplier: Double, val transitionMillis: Long) : ActionWire { override val type = "set_viewer_scale" }
 internal data class SetViewerHighlightWire(val target: TargetWire, val enabled: Boolean, val transitionMillis: Long) : ActionWire { override val type = "set_viewer_highlight" }
-internal data class SendMessageWire(val message: String) : ActionWire { override val type = "send_message" }
-internal data class SendActionBarWire(val message: String) : ActionWire { override val type = "send_action_bar" }
-internal data class ShowTitleWire(val title: String, val subtitle: String, val fadeInMillis: Long, val stayMillis: Long, val fadeOutMillis: Long) : ActionWire { override val type = "show_title" }
+internal data class SendMessageWire(val message: JsonNode) : ActionWire { override val type = "send_message" }
+internal data class SendActionBarWire(val message: JsonNode) : ActionWire { override val type = "send_action_bar" }
+internal data class ShowTitleWire(val title: JsonNode, val subtitle: JsonNode, val fadeInMillis: Long, val stayMillis: Long, val fadeOutMillis: Long) : ActionWire { override val type = "show_title" }
 internal data class EmitParticleWire(val target: TargetWire, val particle: String, val count: Int, val offset: Vec3Wire, val speed: Double) : ActionWire { override val type = "emit_particle" }
 internal data class ApplicationWire(val key: String, val arguments: Map<String, ArgumentWire>) : ActionWire { override val type = "application" }
 internal data class TargetWire(val element: String, val part: String?)

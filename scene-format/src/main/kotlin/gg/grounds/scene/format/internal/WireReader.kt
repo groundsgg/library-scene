@@ -5,66 +5,256 @@ import tools.jackson.databind.JsonNode
 
 /** Strict tree-to-wire conversion keeps Jackson's types out of the public model. */
 internal object WireReader {
-    fun readScene(n: JsonNode) = obj(n, setOf("schemaVersion", "id", "metadata", "catalogs", "groups", "elements"), "/") { o ->
-        SceneWire(i(o, "schemaVersion"), s(o, "id"), metadata(o["metadata"]), catalogs(o["catalogs"]), a(o["groups"]).map(::group), a(o["elements"]).map(::element))
+    fun readScene(node: JsonNode): SceneWire = obj(
+        node,
+        setOf("schemaVersion", "id", "metadata", "catalogs", "groups", "elements"),
+        "/",
+    ) { value ->
+        SceneWire(
+            integer(value, "schemaVersion", "/"),
+            string(value, "id", "/"),
+            metadata(value["metadata"], "/metadata"),
+            catalogs(value["catalogs"], "/catalogs"),
+            array(value["groups"], "/groups").mapIndexed { index, child -> group(child, "/groups/$index") },
+            array(value["elements"], "/elements").mapIndexed { index, child -> element(child, "/elements/$index") },
+        )
     }
-    private fun metadata(n: JsonNode) = obj(n, setOf("name", "description", "tags"), "/metadata") { o -> MetadataWire(s(o, "name"), nullableString(o, "description"), a(o["tags"]).map { text(it) }) }
-    private fun catalogs(n: JsonNode) = obj(n, setOf("assets", "actions"), "/catalogs") { o -> CatalogsWire(catalog(o["assets"]), catalog(o["actions"])) }
-    private fun catalog(n: JsonNode) = obj(n, setOf("id", "version"), "") { o -> CatalogReferenceWire(s(o, "id"), s(o, "version")) }
-    private fun group(n: JsonNode) = obj(n, setOf("id", "displayName", "editorVisible"), "") { o -> GroupWire(s(o, "id"), s(o, "displayName"), b(o, "editorVisible")) }
-    private fun element(n: JsonNode): ElementWire {
-        val type = type(n, "element", setOf("prop", "composite_prop", "npc"))
+
+    private fun metadata(node: JsonNode, path: String) = obj(node, setOf("name", "description", "tags"), path) { value ->
+        MetadataWire(
+            string(value, "name", path),
+            nullableString(value, "description", path),
+            array(value["tags"], childPath(path, "tags")).mapIndexed { index, child -> text(child, childPath(childPath(path, "tags"), index.toString())) },
+        )
+    }
+
+    private fun catalogs(node: JsonNode, path: String) = obj(node, setOf("assets", "actions"), path) { value ->
+        CatalogsWire(
+            catalog(value["assets"], childPath(path, "assets")),
+            catalog(value["actions"], childPath(path, "actions")),
+        )
+    }
+
+    private fun catalog(node: JsonNode, path: String) = obj(node, setOf("id", "version"), path) { value ->
+        CatalogReferenceWire(string(value, "id", path), string(value, "version", path))
+    }
+
+    private fun group(node: JsonNode, path: String) = obj(node, setOf("id", "displayName", "editorVisible"), path) { value ->
+        GroupWire(string(value, "id", path), string(value, "displayName", path), boolean(value, "editorVisible", path))
+    }
+
+    private fun element(node: JsonNode, path: String): ElementWire {
+        val discriminator = type(node, path, "element", setOf("prop", "composite_prop", "npc"))
         val base = setOf("type", "id", "group", "transform", "visible", "activation")
-        return when (type) {
-            "prop" -> obj(n, base + setOf("asset", "initialAnimation"), "") { o -> PropWire(s(o,"id"), nullableString(o,"group"), transform(o["transform"]), b(o,"visible"), s(o,"activation"), s(o,"asset"), nullableString(o,"initialAnimation")) }
-            "composite_prop" -> obj(n, base + "parts", "") { o -> CompositePropWire(s(o,"id"), nullableString(o,"group"), transform(o["transform"]), b(o,"visible"), s(o,"activation"), a(o["parts"]).map(::part)) }
-            else -> obj(n, base + setOf("body","label","labelOffset","look","initialAnimation","interactionBounds","proximity","bindings"), "") { o -> NpcWire(s(o,"id"), nullableString(o,"group"), transform(o["transform"]), b(o,"visible"), s(o,"activation"), s(o,"body"), nullableString(o,"label"), vec(o["labelOffset"]), look(o["look"]), nullableString(o,"initialAnimation"), bounds(o["interactionBounds"]), nullable(o,"proximity",::proximity), a(o["bindings"]).map(::binding)) }
+        return when (discriminator) {
+            "prop" -> obj(node, base + setOf("asset", "initialAnimation"), path) { value ->
+                PropWire(
+                    string(value, "id", path), nullableString(value, "group", path),
+                    transform(value["transform"], childPath(path, "transform")), boolean(value, "visible", path),
+                    enum(value, "activation", path, ACTIVATION_NAMES), string(value, "asset", path),
+                    nullableString(value, "initialAnimation", path),
+                )
+            }
+            "composite_prop" -> obj(node, base + "parts", path) { value ->
+                CompositePropWire(
+                    string(value, "id", path), nullableString(value, "group", path),
+                    transform(value["transform"], childPath(path, "transform")), boolean(value, "visible", path),
+                    enum(value, "activation", path, ACTIVATION_NAMES),
+                    array(value["parts"], childPath(path, "parts")).mapIndexed { index, child -> part(child, childPath(childPath(path, "parts"), index.toString())) },
+                )
+            }
+            else -> obj(node, base + setOf("body", "label", "labelOffset", "look", "initialAnimation", "interactionBounds", "proximity", "bindings"), path) { value ->
+                NpcWire(
+                    string(value, "id", path), nullableString(value, "group", path),
+                    transform(value["transform"], childPath(path, "transform")), boolean(value, "visible", path),
+                    enum(value, "activation", path, ACTIVATION_NAMES), string(value, "body", path),
+                    nullableComponent(value, "label", path), vec(value["labelOffset"], childPath(path, "labelOffset")),
+                    look(value["look"], childPath(path, "look")), nullableString(value, "initialAnimation", path),
+                    bounds(value["interactionBounds"], childPath(path, "interactionBounds")),
+                    nullable(value, "proximity", path, ::proximity),
+                    array(value["bindings"], childPath(path, "bindings")).mapIndexed { index, child -> binding(child, childPath(childPath(path, "bindings"), index.toString())) },
+                )
+            }
         }
     }
-    private fun part(n: JsonNode) = obj(n, setOf("id","asset","transform"), "") { o -> CompositePartWire(s(o,"id"),s(o,"asset"),transform(o["transform"])) }
-    private fun transform(n: JsonNode) = obj(n, setOf("position","rotation","scale"), "") { o -> TransformWire(vec(o["position"]), rotation(o["rotation"]), vec(o["scale"])) }
-    private fun vec(n: JsonNode) = obj(n, setOf("x","y","z"), "") { o -> Vec3Wire(d(o,"x"),d(o,"y"),d(o,"z")) }
-    private fun rotation(n: JsonNode) = obj(n, setOf("yaw","pitch","roll"), "") { o -> RotationWire(d(o,"yaw"),d(o,"pitch"),d(o,"roll")) }
-    private fun bounds(n: JsonNode) = obj(n, setOf("center","size"), "") { o -> BoundsWire(vec(o["center"]),vec(o["size"])) }
-    private fun look(n: JsonNode): LookWire = when(type(n,"look",setOf("fixed","track_nearest"))) {
-        "fixed" -> obj(n,setOf("type"),"") { FixedLookWire }
-        else -> obj(n,setOf("type","maxDistance","yawOnly","maxTurnDegreesPerSecond"),"") { o -> TrackNearestLookWire(d(o,"maxDistance"),b(o,"yawOnly"),d(o,"maxTurnDegreesPerSecond")) }
+
+    private fun part(node: JsonNode, path: String) = obj(node, setOf("id", "asset", "transform"), path) { value ->
+        CompositePartWire(string(value, "id", path), string(value, "asset", path), transform(value["transform"], childPath(path, "transform")))
     }
-    private fun proximity(n: JsonNode) = obj(n,setOf("enterRadius","exitRadius"),"") { o -> ProximityWire(d(o,"enterRadius"),d(o,"exitRadius")) }
-    private fun binding(n: JsonNode) = obj(n,setOf("trigger","conditions","cooldownMillis","debounceMillis","actions"),"") { o -> BindingWire(s(o,"trigger"),a(o["conditions"]).map(::condition),l(o,"cooldownMillis"),l(o,"debounceMillis"),a(o["actions"]).map(::action)) }
-    private fun condition(n: JsonNode): ConditionWire = when(type(n,"condition",setOf("hand","sneaking","permission","game_mode"))) {
-        "hand" -> obj(n,setOf("type","hand"),"") { o -> HandConditionWire(s(o,"hand")) }
-        "sneaking" -> obj(n,setOf("type","sneaking"),"") { o -> SneakingConditionWire(b(o,"sneaking")) }
-        "permission" -> obj(n,setOf("type","permission"),"") { o -> PermissionConditionWire(s(o,"permission")) }
-        else -> obj(n,setOf("type","gameMode"),"") { o -> GameModeConditionWire(s(o,"gameMode")) }
+
+    private fun transform(node: JsonNode, path: String) = obj(node, setOf("position", "rotation", "scale"), path) { value ->
+        TransformWire(vec(value["position"], childPath(path, "position")), rotation(value["rotation"], childPath(path, "rotation")), vec(value["scale"], childPath(path, "scale")))
     }
-    private fun action(n: JsonNode): ActionWire = when(type(n,"action",ACTION_TYPES)) {
-        "start_animation" -> obj(n,setOf("type","target","animation"),"") { o -> StartAnimationWire(target(o["target"]),s(o,"animation")) }
-        "stop_animation" -> obj(n,setOf("type","target","animation"),"") { o -> StopAnimationWire(target(o["target"]),nullableString(o,"animation")) }
-        "play_sound" -> obj(n,setOf("type","sound","volume","pitch"),"") { o -> PlaySoundWire(s(o,"sound"),d(o,"volume"),d(o,"pitch")) }
-        "set_viewer_scale" -> obj(n,setOf("type","target","multiplier","transitionMillis"),"") { o -> SetViewerScaleWire(target(o["target"]),d(o,"multiplier"),l(o,"transitionMillis")) }
-        "set_viewer_highlight" -> obj(n,setOf("type","target","enabled","transitionMillis"),"") { o -> SetViewerHighlightWire(target(o["target"]),b(o,"enabled"),l(o,"transitionMillis")) }
-        "send_message" -> obj(n,setOf("type","message"),"") { o -> SendMessageWire(s(o,"message")) }
-        "send_action_bar" -> obj(n,setOf("type","message"),"") { o -> SendActionBarWire(s(o,"message")) }
-        "show_title" -> obj(n,setOf("type","title","subtitle","fadeInMillis","stayMillis","fadeOutMillis"),"") { o -> ShowTitleWire(s(o,"title"),s(o,"subtitle"),l(o,"fadeInMillis"),l(o,"stayMillis"),l(o,"fadeOutMillis")) }
-        "emit_particle" -> obj(n,setOf("type","target","particle","count","offset","speed"),"") { o -> EmitParticleWire(target(o["target"]),s(o,"particle"),i(o,"count"),vec(o["offset"]),d(o,"speed")) }
-        else -> obj(n,setOf("type","key","arguments"),"") { o -> ApplicationWire(s(o,"key"), map(o["arguments"]).mapValues { argument(it.value) }) }
+
+    private fun vec(node: JsonNode, path: String) = obj(node, setOf("x", "y", "z"), path) { value ->
+        Vec3Wire(double(value, "x", path), double(value, "y", path), double(value, "z", path))
     }
-    private fun target(n: JsonNode) = obj(n,setOf("element","part"),"") { o -> TargetWire(s(o,"element"),nullableString(o,"part")) }
-    private fun argument(n: JsonNode): ArgumentWire = when(type(n,"argument",setOf("string","long","decimal","boolean","enum","asset"))) {
-        "string" -> obj(n,setOf("type","value"),"") { o -> StringArgumentWire(s(o,"value")) }; "long" -> obj(n,setOf("type","value"),"") { o -> LongArgumentWire(l(o,"value")) }; "decimal" -> obj(n,setOf("type","value"),"") { o -> DecimalArgumentWire(decimal(o,"value")) }; "boolean" -> obj(n,setOf("type","value"),"") { o -> BooleanArgumentWire(b(o,"value")) }; "enum" -> obj(n,setOf("type","value"),"") { o -> EnumArgumentWire(s(o,"value")) }; else -> obj(n,setOf("type","value"),"") { o -> AssetArgumentWire(s(o,"value")) }
+
+    private fun rotation(node: JsonNode, path: String) = obj(node, setOf("yaw", "pitch", "roll"), path) { value ->
+        RotationWire(double(value, "yaw", path), double(value, "pitch", path), double(value, "roll", path))
     }
-    private val ACTION_TYPES = setOf("start_animation","stop_animation","play_sound","set_viewer_scale","set_viewer_highlight","send_message","send_action_bar","show_title","emit_particle","application")
-    private fun type(n: JsonNode, noun: String, valid: Set<String>): String { val value = obj(n, null, "") { s(it,"type") }; if(value !in valid) fail("UNKNOWN_TYPE", "Unknown $noun type."); return value }
-    private fun <T> obj(n: JsonNode, fields: Set<String>?, path: String, f: (JsonNode) -> T): T { if(!n.isObject) fail("MALFORMED_JSON","Expected an object."); val names=n.properties().map { it.key }.toSet(); if(fields != null) { val unknown=names-fields; if(unknown.isNotEmpty()) fail("UNKNOWN_FIELD","Unknown field."); if(!names.containsAll(fields)) fail("MALFORMED_JSON","Required field is missing.") }; return f(n) }
-    private fun a(n: JsonNode): List<JsonNode> { if(!n.isArray) fail("MALFORMED_JSON","Expected an array."); return n.toList() }
-    private fun map(n: JsonNode): Map<String,JsonNode> { if(!n.isObject) fail("MALFORMED_JSON","Expected an object."); return n.properties().associate { it.key to it.value } }
-    private fun s(o: JsonNode,k:String)=text(o[k]); private fun text(n:JsonNode):String { if(!n.isTextual) fail("MALFORMED_JSON","Expected a string."); return n.stringValue() }
-    private fun nullableString(o:JsonNode,k:String)=if(o[k].isNull) null else text(o[k]); private fun <T> nullable(o:JsonNode,k:String,f:(JsonNode)->T)=if(o[k].isNull) null else f(o[k])
-    private fun b(o:JsonNode,k:String):Boolean { val n=o[k]; if(!n.isBoolean) fail("MALFORMED_JSON","Expected a boolean."); return n.booleanValue() }
-    private fun d(o:JsonNode,k:String):Double { val n=o[k]; if(!n.isNumber || !n.doubleValue().isFinite()) fail("MALFORMED_JSON","Expected a finite number."); return n.doubleValue() }
-    private fun i(o:JsonNode,k:String):Int { val n=o[k]; if(!n.isIntegralNumber || !n.canConvertToInt()) fail("MALFORMED_JSON","Expected an integer."); return n.intValue() }
-    private fun l(o:JsonNode,k:String):Long { val n=o[k]; if(!n.isIntegralNumber || !n.canConvertToLong()) fail("MALFORMED_JSON","Expected an integer."); return n.longValue() }
-    private fun decimal(o:JsonNode,k:String):BigDecimal { val n=o[k]; if(!n.isNumber) fail("MALFORMED_JSON","Expected a number."); return n.decimalValue() }
-    private fun fail(code:String,message:String):Nothing = throw DecodeFailure("/",code,message)
+
+    private fun bounds(node: JsonNode, path: String) = obj(node, setOf("center", "size"), path) { value ->
+        BoundsWire(vec(value["center"], childPath(path, "center")), vec(value["size"], childPath(path, "size")))
+    }
+
+    private fun look(node: JsonNode, path: String): LookWire = when (type(node, path, "look", setOf("fixed", "track_nearest"))) {
+        "fixed" -> obj(node, setOf("type"), path) { FixedLookWire }
+        else -> obj(node, setOf("type", "maxDistance", "yawOnly", "maxTurnDegreesPerSecond"), path) { value ->
+            TrackNearestLookWire(double(value, "maxDistance", path), boolean(value, "yawOnly", path), double(value, "maxTurnDegreesPerSecond", path))
+        }
+    }
+
+    private fun proximity(node: JsonNode, path: String) = obj(node, setOf("enterRadius", "exitRadius"), path) { value ->
+        ProximityWire(double(value, "enterRadius", path), double(value, "exitRadius", path))
+    }
+
+    private fun binding(node: JsonNode, path: String) = obj(node, setOf("trigger", "conditions", "cooldownMillis", "debounceMillis", "actions"), path) { value ->
+        BindingWire(
+            enum(value, "trigger", path, TRIGGER_NAMES),
+            array(value["conditions"], childPath(path, "conditions")).mapIndexed { index, child -> condition(child, childPath(childPath(path, "conditions"), index.toString())) },
+            long(value, "cooldownMillis", path), long(value, "debounceMillis", path),
+            array(value["actions"], childPath(path, "actions")).mapIndexed { index, child -> action(child, childPath(childPath(path, "actions"), index.toString())) },
+        )
+    }
+
+    private fun condition(node: JsonNode, path: String): ConditionWire = when (type(node, path, "condition", CONDITION_TYPES)) {
+        "hand" -> obj(node, setOf("type", "hand"), path) { HandConditionWire(enum(it, "hand", path, HAND_NAMES)) }
+        "sneaking" -> obj(node, setOf("type", "sneaking"), path) { SneakingConditionWire(boolean(it, "sneaking", path)) }
+        "permission" -> obj(node, setOf("type", "permission"), path) { PermissionConditionWire(string(it, "permission", path)) }
+        else -> obj(node, setOf("type", "gameMode"), path) { GameModeConditionWire(enum(it, "gameMode", path, GAME_MODE_NAMES)) }
+    }
+
+    private fun action(node: JsonNode, path: String): ActionWire = when (type(node, path, "action", ACTION_TYPES)) {
+        "start_animation" -> obj(node, setOf("type", "target", "animation"), path) { StartAnimationWire(target(it["target"], childPath(path, "target")), string(it, "animation", path)) }
+        "stop_animation" -> obj(node, setOf("type", "target", "animation"), path) { StopAnimationWire(target(it["target"], childPath(path, "target")), nullableString(it, "animation", path)) }
+        "play_sound" -> obj(node, setOf("type", "sound", "volume", "pitch"), path) { PlaySoundWire(string(it, "sound", path), double(it, "volume", path), double(it, "pitch", path)) }
+        "set_viewer_scale" -> obj(node, setOf("type", "target", "multiplier", "transitionMillis"), path) { SetViewerScaleWire(target(it["target"], childPath(path, "target")), double(it, "multiplier", path), long(it, "transitionMillis", path)) }
+        "set_viewer_highlight" -> obj(node, setOf("type", "target", "enabled", "transitionMillis"), path) { SetViewerHighlightWire(target(it["target"], childPath(path, "target")), boolean(it, "enabled", path), long(it, "transitionMillis", path)) }
+        "send_message" -> obj(node, setOf("type", "message"), path) { SendMessageWire(component(it, "message", path)) }
+        "send_action_bar" -> obj(node, setOf("type", "message"), path) { SendActionBarWire(component(it, "message", path)) }
+        "show_title" -> obj(node, setOf("type", "title", "subtitle", "fadeInMillis", "stayMillis", "fadeOutMillis"), path) {
+            ShowTitleWire(component(it, "title", path), component(it, "subtitle", path), long(it, "fadeInMillis", path), long(it, "stayMillis", path), long(it, "fadeOutMillis", path))
+        }
+        "emit_particle" -> obj(node, setOf("type", "target", "particle", "count", "offset", "speed"), path) {
+            EmitParticleWire(target(it["target"], childPath(path, "target")), string(it, "particle", path), integer(it, "count", path), vec(it["offset"], childPath(path, "offset")), double(it, "speed", path))
+        }
+        else -> obj(node, setOf("type", "key", "arguments"), path) { value ->
+            ApplicationWire(
+                string(value, "key", path),
+                objectMap(value["arguments"], childPath(path, "arguments")).mapValues { (key, child) -> argument(child, childPath(childPath(path, "arguments"), key)) },
+            )
+        }
+    }
+
+    private fun target(node: JsonNode, path: String) = obj(node, setOf("element", "part"), path) { value ->
+        TargetWire(string(value, "element", path), nullableString(value, "part", path))
+    }
+
+    private fun argument(node: JsonNode, path: String): ArgumentWire = when (type(node, path, "argument", ARGUMENT_TYPES)) {
+        "string" -> obj(node, setOf("type", "value"), path) { StringArgumentWire(string(it, "value", path)) }
+        "long" -> obj(node, setOf("type", "value"), path) { LongArgumentWire(long(it, "value", path)) }
+        "decimal" -> obj(node, setOf("type", "value"), path) { DecimalArgumentWire(decimal(it, "value", path)) }
+        "boolean" -> obj(node, setOf("type", "value"), path) { BooleanArgumentWire(boolean(it, "value", path)) }
+        "enum" -> obj(node, setOf("type", "value"), path) { EnumArgumentWire(string(it, "value", path)) }
+        else -> obj(node, setOf("type", "value"), path) { AssetArgumentWire(string(it, "value", path)) }
+    }
+
+    private fun type(node: JsonNode, path: String, noun: String, valid: Set<String>): String {
+        obj(node, null, path) { }
+        if (!node.has("type")) fail(childPath(path, "type"), "MALFORMED_JSON", "Required field is missing.")
+        val value = string(node, "type", path)
+        if (value !in valid) fail(childPath(path, "type"), "UNKNOWN_TYPE", "Unknown $noun type.")
+        return value
+    }
+
+    private fun enum(node: JsonNode, key: String, path: String, values: Set<String>): String {
+        val value = string(node, key, path)
+        if (value !in values) fail(childPath(path, key), "UNKNOWN_TYPE", "Unknown enum value.")
+        return value
+    }
+
+    private fun <T> obj(node: JsonNode, fields: Set<String>?, path: String, read: (JsonNode) -> T): T {
+        if (!node.isObject) fail(path, "MALFORMED_JSON", "Expected an object.")
+        if (fields != null) {
+            val names = node.properties().map { it.key }.toSet()
+            val unknown = names.firstOrNull { it !in fields }
+            if (unknown != null) fail(childPath(path, unknown), "UNKNOWN_FIELD", "Unknown field.")
+            val missing = fields.firstOrNull { it !in names }
+            if (missing != null) fail(childPath(path, missing), "MALFORMED_JSON", "Required field is missing.")
+        }
+        return read(node)
+    }
+
+    private fun array(node: JsonNode, path: String): List<JsonNode> {
+        if (!node.isArray) fail(path, "MALFORMED_JSON", "Expected an array.")
+        return node.toList()
+    }
+
+    private fun objectMap(node: JsonNode, path: String): Map<String, JsonNode> {
+        if (!node.isObject) fail(path, "MALFORMED_JSON", "Expected an object.")
+        return node.properties().associate { it.key to it.value }
+    }
+
+    private fun string(node: JsonNode, key: String, path: String) = text(node[key], childPath(path, key))
+
+    private fun text(node: JsonNode, path: String): String {
+        if (!node.isString) fail(path, "MALFORMED_JSON", "Expected a string.")
+        return node.stringValue()
+    }
+
+    private fun nullableString(node: JsonNode, key: String, path: String): String? =
+        if (node[key].isNull) null else text(node[key], childPath(path, key))
+
+    private fun <T> nullable(node: JsonNode, key: String, path: String, read: (JsonNode, String) -> T): T? =
+        if (node[key].isNull) null else read(node[key], childPath(path, key))
+
+    private fun nullableComponent(node: JsonNode, key: String, path: String): JsonNode? =
+        if (node[key].isNull) null else component(node, key, path)
+
+    private fun component(node: JsonNode, key: String, path: String): JsonNode {
+        val value = node[key]
+        ComponentWireValidator.validate(value, childPath(path, key))
+        return value
+    }
+
+    private fun boolean(node: JsonNode, key: String, path: String): Boolean {
+        val value = node[key]
+        if (!value.isBoolean) fail(childPath(path, key), "MALFORMED_JSON", "Expected a boolean.")
+        return value.booleanValue()
+    }
+
+    private fun double(node: JsonNode, key: String, path: String): Double {
+        val value = node[key]
+        if (!value.isNumber || !value.doubleValue().isFinite()) fail(childPath(path, key), "MALFORMED_JSON", "Expected a finite number.")
+        return value.doubleValue()
+    }
+
+    private fun integer(node: JsonNode, key: String, path: String): Int {
+        val value = node[key]
+        if (!value.isIntegralNumber || !value.canConvertToInt()) fail(childPath(path, key), "MALFORMED_JSON", "Expected an integer.")
+        return value.intValue()
+    }
+
+    private fun long(node: JsonNode, key: String, path: String): Long {
+        val value = node[key]
+        if (!value.isIntegralNumber || !value.canConvertToLong()) fail(childPath(path, key), "MALFORMED_JSON", "Expected an integer.")
+        return value.longValue()
+    }
+
+    private fun decimal(node: JsonNode, key: String, path: String): BigDecimal {
+        val value = node[key]
+        if (!value.isNumber) fail(childPath(path, key), "MALFORMED_JSON", "Expected a number.")
+        return value.decimalValue()
+    }
+
+    private fun fail(path: String, code: String, message: String): Nothing = throw DecodeFailure(path, code, message)
+
+    private val ACTIVATION_NAMES = setOf("AUTOMATIC", "ALWAYS")
+    private val TRIGGER_NAMES = setOf("LEFT_CLICK", "RIGHT_CLICK", "HOVER_ENTER", "HOVER_LEAVE", "PROXIMITY_ENTER", "PROXIMITY_LEAVE")
+    private val HAND_NAMES = setOf("MAIN", "OFF")
+    private val GAME_MODE_NAMES = setOf("SURVIVAL", "CREATIVE", "ADVENTURE", "SPECTATOR")
+    private val CONDITION_TYPES = setOf("hand", "sneaking", "permission", "game_mode")
+    private val ACTION_TYPES = setOf("start_animation", "stop_animation", "play_sound", "set_viewer_scale", "set_viewer_highlight", "send_message", "send_action_bar", "show_title", "emit_particle", "application")
+    private val ARGUMENT_TYPES = setOf("string", "long", "decimal", "boolean", "enum", "asset")
 }
