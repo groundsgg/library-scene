@@ -3,6 +3,8 @@ package gg.grounds.scene.format
 import gg.grounds.scene.format.SceneProblemCode.*
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import net.kyori.adventure.text.Component
+import net.kyori.adventure.text.event.ClickEvent
 
 class IntrinsicValidationTest {
     @Test
@@ -68,6 +70,46 @@ class IntrinsicValidationTest {
         assertEquals(result.problems.sortedWith(SceneProblem.ORDERING), result.problems)
     }
 
+    @Test
+    fun `intrinsic validation rejects interactive components in every scene text field`() {
+        val unsafe = Component.text("unsafe").clickEvent(ClickEvent.runCommand("/op @s"))
+        val result = SceneValidation.validateIntrinsic(
+            scene(
+                elements = listOf(
+                    npc(
+                        label = unsafe,
+                        bindings = listOf(
+                            TriggerBinding(
+                                SceneTrigger.LEFT_CLICK,
+                                emptyList(),
+                                0,
+                                0,
+                                listOf(
+                                    SendMessageAction(unsafe),
+                                    SendActionBarAction(unsafe),
+                                    ShowTitleAction(unsafe, unsafe, 0, 0, 0),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(
+            listOf(
+                "elements/npc/bindings/0/actions/0/message/components/0/clickEvent",
+                "elements/npc/bindings/0/actions/1/message/components/0/clickEvent",
+                "elements/npc/bindings/0/actions/2/subtitle/components/0/clickEvent",
+                "elements/npc/bindings/0/actions/2/title/components/0/clickEvent",
+                "elements/npc/label/components/0/clickEvent",
+            ),
+            result.problems.map(SceneProblem::path),
+        )
+        assertEquals(List(5) { FORBIDDEN_TEXT_EVENT }, result.problems.map(SceneProblem::code))
+        assertEquals(List(5) { "grounds:test#npc" }, result.problems.map(SceneProblem::qualifiedIdentity))
+    }
+
     private fun scene(groups: List<SceneGroup> = emptyList(), elements: List<SceneElement>): SceneDocument = SceneDocument(
         schemaVersion = 1,
         id = SceneId("grounds:test"),
@@ -79,9 +121,10 @@ class IntrinsicValidationTest {
 
     private fun npc(
         id: LocalId = LocalId("npc"),
+        label: Component? = null,
         proximity: ProximitySensor? = ProximitySensor(1.0, 2.0),
         bindings: List<TriggerBinding> = emptyList(),
-    ) = Npc(id, null, transform(), body = AssetKey("grounds:npc"), label = null, labelOffset = ORIGIN, look = LookBehavior.Fixed,
+    ) = Npc(id, null, transform(), body = AssetKey("grounds:npc"), label = label, labelOffset = ORIGIN, look = LookBehavior.Fixed,
         initialAnimation = null, interactionBounds = LocalBounds(ORIGIN, Vec3(1.0, 1.0, 1.0)), proximity = proximity, bindings = bindings)
 
     private fun binding(trigger: SceneTrigger) = TriggerBinding(trigger, emptyList(), 0, 0, listOf(SendMessageAction(net.kyori.adventure.text.Component.text("x"))))

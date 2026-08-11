@@ -28,23 +28,36 @@ internal object IntrinsicValidator {
                     duplicates(element.parts.map { it.id }, "$path/parts", SceneProblemCode.DUPLICATE_PART_ID, this)
                 }
                 is Npc -> {
+                    val identity = "${scene.id.value}#${element.id.value}"
+                    element.label?.let { label ->
+                        addAll(ComponentSafety.findProblems(label, "$path/label", identity))
+                    }
                     if (element.bindings.size > MAX_BINDINGS) add(limit("$path/bindings", element.id.value))
-                    element.bindings.forEachIndexed { index, binding -> validateBinding(binding, "$path/bindings/$index", element, elements, this) }
+                    element.bindings.forEachIndexed { index, binding -> validateBinding(binding, "$path/bindings/$index", element, identity, elements, this) }
                 }
                 is Prop -> Unit
             }
         }
     }
 
-    private fun validateBinding(binding: TriggerBinding, path: String, npc: Npc, elements: Map<LocalId, SceneElement>, problems: MutableList<SceneProblem>) {
+    private fun validateBinding(binding: TriggerBinding, path: String, npc: Npc, identity: String, elements: Map<LocalId, SceneElement>, problems: MutableList<SceneProblem>) {
         if (binding.actions.size > MAX_ACTIONS) problems += limit("$path/actions", npc.id.value)
         if ((binding.trigger == SceneTrigger.PROXIMITY_ENTER || binding.trigger == SceneTrigger.PROXIMITY_LEAVE) && npc.proximity == null) {
             problems += problem("$path/trigger", SceneProblemCode.MISSING_PROXIMITY_SENSOR, npc.id.value, "Proximity trigger requires a proximity sensor.")
         }
-        binding.actions.forEachIndexed { index, action -> validateAction(action, "$path/actions/$index", elements, problems) }
+        binding.actions.forEachIndexed { index, action -> validateAction(action, "$path/actions/$index", identity, elements, problems) }
     }
 
-    private fun validateAction(action: SceneAction, path: String, elements: Map<LocalId, SceneElement>, problems: MutableList<SceneProblem>) {
+    private fun validateAction(action: SceneAction, path: String, identity: String, elements: Map<LocalId, SceneElement>, problems: MutableList<SceneProblem>) {
+        when (action) {
+            is SendMessageAction -> problems += ComponentSafety.findProblems(action.message, "$path/message", identity)
+            is SendActionBarAction -> problems += ComponentSafety.findProblems(action.message, "$path/message", identity)
+            is ShowTitleAction -> {
+                problems += ComponentSafety.findProblems(action.title, "$path/title", identity)
+                problems += ComponentSafety.findProblems(action.subtitle, "$path/subtitle", identity)
+            }
+            else -> Unit
+        }
         if (action is ApplicationAction && action.arguments.size > MAX_ARGUMENTS) problems += limit("$path/arguments", action.key.value)
         val target = when (action) {
             is StartAnimationAction -> action.target
