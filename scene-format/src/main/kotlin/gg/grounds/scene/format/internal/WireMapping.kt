@@ -4,8 +4,47 @@ import gg.grounds.scene.format.*
 import net.kyori.adventure.text.Component
 import tools.jackson.databind.JsonNode
 import net.kyori.adventure.text.serializer.gson.GsonComponentSerializer
+import tools.jackson.databind.json.JsonMapper
 
 internal object WireMapping {
+    private val componentMapper = JsonMapper.builder().build()
+
+    fun toCanonicalWire(scene: SceneDocument): SceneWire = SceneWire(
+        scene.schemaVersion, scene.id.value,
+        MetadataWire(scene.metadata.name, scene.metadata.description, scene.metadata.tags.sortedWith(CODE_POINT_ORDER)),
+        CatalogsWire(CatalogReferenceWire(scene.catalogs.assets.id.value, scene.catalogs.assets.version), CatalogReferenceWire(scene.catalogs.actions.id.value, scene.catalogs.actions.version)),
+        scene.groups.sortedWith(compareBy(CODE_POINT_ORDER) { it.id.value }).map { GroupWire(it.id.value, it.displayName, it.editorVisible) },
+        scene.elements.sortedWith(compareBy(CODE_POINT_ORDER) { it.id.value }).map(::canonicalElement),
+    )
+
+    private fun canonicalElement(element: SceneElement): ElementWire = when (element) {
+        is Prop -> PropWire(element.id.value, element.group?.value, transform(element.transform), element.visible, element.activation.name, element.asset.value, element.initialAnimation?.value)
+        is CompositeProp -> CompositePropWire(element.id.value, element.group?.value, transform(element.transform), element.visible, element.activation.name, element.parts.sortedWith(compareBy(CODE_POINT_ORDER) { it.id.value }).map { CompositePartWire(it.id.value, it.asset.value, transform(it.transform)) })
+        is Npc -> NpcWire(element.id.value, element.group?.value, transform(element.transform), element.visible, element.activation.name, element.body.value, element.label?.let(::component), vec(element.labelOffset), look(element.look), element.initialAnimation?.value, bounds(element.interactionBounds), element.proximity?.let { ProximityWire(it.enterRadius, it.exitRadius) }, element.bindings.map(::binding))
+    }
+
+    private fun transform(value: Transform) = TransformWire(vec(value.position), RotationWire(value.rotation.yaw, value.rotation.pitch, value.rotation.roll), vec(value.scale))
+    private fun vec(value: Vec3) = Vec3Wire(value.x, value.y, value.z)
+    private fun bounds(value: LocalBounds) = BoundsWire(vec(value.center), vec(value.size))
+    private fun look(value: LookBehavior): LookWire = when (value) { LookBehavior.Fixed -> FixedLookWire; is LookBehavior.TrackNearest -> TrackNearestLookWire(value.maxDistance, value.yawOnly, value.maxTurnDegreesPerSecond) }
+    private fun binding(value: TriggerBinding) = BindingWire(value.trigger.name, value.conditions.map(::condition).sortedBy(CanonicalJson::compact), value.cooldownMillis, value.debounceMillis, value.actions.map(::action))
+    private fun condition(value: SceneCondition): ConditionWire = when (value) { is HandCondition -> HandConditionWire(value.hand.name); is SneakingCondition -> SneakingConditionWire(value.sneaking); is PermissionCondition -> PermissionConditionWire(value.permission); is GameModeCondition -> GameModeConditionWire(value.gameMode.name) }
+    private fun action(value: SceneAction): ActionWire = when (value) {
+        is StartAnimationAction -> StartAnimationWire(target(value.target), value.animation.value)
+        is StopAnimationAction -> StopAnimationWire(target(value.target), value.animation?.value)
+        is PlaySoundAction -> PlaySoundWire(value.sound.value, value.volume, value.pitch)
+        is SetViewerScaleAction -> SetViewerScaleWire(target(value.target), value.multiplier, value.transitionMillis)
+        is SetViewerHighlightAction -> SetViewerHighlightWire(target(value.target), value.enabled, value.transitionMillis)
+        is SendMessageAction -> SendMessageWire(component(value.message))
+        is SendActionBarAction -> SendActionBarWire(component(value.message))
+        is ShowTitleAction -> ShowTitleWire(component(value.title), component(value.subtitle), value.fadeInMillis, value.stayMillis, value.fadeOutMillis)
+        is EmitParticleAction -> EmitParticleWire(target(value.target), value.particle.value, value.count, vec(value.offset), value.speed)
+        is ApplicationAction -> ApplicationWire(value.key.value, value.arguments.entries.sortedWith(compareBy(CODE_POINT_ORDER) { it.key.value }).associate { it.key.value to argument(it.value) })
+    }
+    private fun target(value: ElementTarget) = TargetWire(value.element.value, value.part?.value)
+    private fun argument(value: ApplicationArgument): ArgumentWire = when (value) { is StringArgument -> StringArgumentWire(value.value); is LongArgument -> LongArgumentWire(value.value); is DecimalArgument -> DecimalArgumentWire(value.value); is BooleanArgument -> BooleanArgumentWire(value.value); is EnumArgument -> EnumArgumentWire(value.value.value); is AssetArgument -> AssetArgumentWire(value.value.value) }
+    private fun component(value: Component): JsonNode = CanonicalJson.canonicalize(componentMapper.readTree(GsonComponentSerializer.gson().serialize(value)))
+
     fun toDomain(w: SceneWire): SceneDocument {
         if (w.schemaVersion != 1) throw DecodeFailure("/schemaVersion", "UNSUPPORTED_SCHEMA_VERSION", "Schema version must be 1.")
         return SceneDocument(w.schemaVersion, SceneId(w.id), SceneMetadata(w.metadata.name, w.metadata.description, w.metadata.tags.toSet()), SceneCatalogReferences(catalog(w.catalogs.assets), catalog(w.catalogs.actions)), w.groups.map { SceneGroup(LocalId(it.id), it.displayName, it.editorVisible) }, w.elements.map(::element))
@@ -30,4 +69,16 @@ internal object WireMapping {
     private fun target(w:TargetWire)=ElementTarget(LocalId(w.element),w.part?.let(::LocalId))
     private fun argument(w:ArgumentWire):ApplicationArgument=when(w) { is StringArgumentWire -> StringArgument(w.value); is LongArgumentWire -> LongArgument(w.value); is DecimalArgumentWire -> DecimalArgument(w.value); is BooleanArgumentWire -> BooleanArgument(w.value); is EnumArgumentWire -> EnumArgument(LocalId(w.value)); is AssetArgumentWire -> AssetArgument(AssetKey(w.value)) }
     private fun component(json: JsonNode):Component = GsonComponentSerializer.gson().deserialize(json.toString())
+}
+
+internal val CODE_POINT_ORDER: Comparator<String> = Comparator { left, right ->
+    var leftIndex = 0
+    var rightIndex = 0
+    while (leftIndex < left.length && rightIndex < right.length) {
+        val comparison = left.codePointAt(leftIndex).compareTo(right.codePointAt(rightIndex))
+        if (comparison != 0) return@Comparator comparison
+        leftIndex += Character.charCount(left.codePointAt(leftIndex))
+        rightIndex += Character.charCount(right.codePointAt(rightIndex))
+    }
+    (left.length - leftIndex).compareTo(right.length - rightIndex)
 }

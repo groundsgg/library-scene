@@ -1,10 +1,21 @@
 package gg.grounds.scene.format
 
 import gg.grounds.scene.format.internal.DecodeFailure
+import gg.grounds.scene.format.internal.CanonicalJson
 import gg.grounds.scene.format.internal.SceneMapper
 import gg.grounds.scene.format.internal.WireMapping
 
 object SceneJson {
+    fun encode(scene: SceneDocument): SceneEncodeResult {
+        val problems = SceneValidation.validateIntrinsic(scene).problems
+        if (problems.isNotEmpty()) return SceneEncodeResult.Failure(problems)
+        return try {
+            SceneEncodeResult.Success(CanonicalJson.write(WireMapping.toCanonicalWire(scene)))
+        } catch (_: RuntimeException) {
+            SceneEncodeResult.Failure(listOf(SceneProblem("/", SceneProblemCode.ENCODING_FAILURE, scene.id.value, "Scene JSON could not be encoded.")))
+        }
+    }
+
     fun decode(bytes: ByteArray): SceneDecodeResult = try {
         val scene = WireMapping.toDomain(SceneMapper.read(bytes))
         val problems = SceneValidation.validateIntrinsic(scene).problems
