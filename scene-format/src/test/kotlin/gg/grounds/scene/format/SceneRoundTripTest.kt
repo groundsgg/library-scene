@@ -1,5 +1,6 @@
 package gg.grounds.scene.format
 
+import java.math.BigDecimal
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -43,4 +44,24 @@ class SceneRoundTripTest {
         assertTrue("\"name\": \"high\\uD800 low\\uDC00 pair😀\"" in text)
         assertFalse('\uFFFD' in text)
     }
+
+    @Test
+    fun `maximum canonical decimal expansion survives exact public roundtrip`() {
+        val json = completeJson().replace("\"value\":12.50", "\"value\":1e127")
+        val first =
+            assertIs<SceneDecodeResult.Success>(SceneJson.decode(json.encodeToByteArray())).scene
+        val firstBytes = assertIs<SceneEncodeResult.Success>(SceneJson.encode(first)).bytes
+        val second = assertIs<SceneDecodeResult.Success>(SceneJson.decode(firstBytes)).scene
+        val secondBytes = assertIs<SceneEncodeResult.Success>(SceneJson.encode(second)).bytes
+
+        assertEquals(0, BigDecimal("1e127").compareTo(decimalArgument(first).value))
+        assertEquals(0, BigDecimal("1e127").compareTo(decimalArgument(second).value))
+        assertContentEquals(firstBytes, secondBytes)
+        assertTrue("\"value\": " + "1" + "0".repeat(127) in firstBytes.decodeToString())
+    }
+
+    private fun decimalArgument(scene: SceneDocument): DecimalArgument =
+        (((scene.elements.last() as Npc).bindings.single().actions.last() as ApplicationAction)
+            .arguments
+            .getValue(LocalId("decimal")) as DecimalArgument)
 }

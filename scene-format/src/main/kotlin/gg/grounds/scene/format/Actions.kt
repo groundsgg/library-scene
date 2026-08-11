@@ -107,7 +107,12 @@ private fun requireNonNegativeMillis(value: Long, name: String) {
 }
 
 private fun requireCanonicalDecimal(value: BigDecimal): BigDecimal {
-    val canonical = value.stripTrailingZeros()
+    val canonical =
+        try {
+            value.stripTrailingZeros()
+        } catch (failure: ArithmeticException) {
+            throw IllegalArgumentException("Canonical decimal exceeds 128 characters.", failure)
+        }
     val precision = canonical.precision().toLong()
     val scale = canonical.scale().toLong()
     val signLength = if (canonical.signum() < 0) 1L else 0L

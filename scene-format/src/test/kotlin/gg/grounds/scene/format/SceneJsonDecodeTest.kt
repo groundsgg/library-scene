@@ -258,6 +258,16 @@ class SceneJsonDecodeTest {
             SceneProblemCode.LIMIT_EXCEEDED,
             path,
         )
+        assertFailure(
+            completeJson().replace("\"value\":12.50", "\"value\":1000e2147483646"),
+            SceneProblemCode.LIMIT_EXCEEDED,
+            path,
+        )
+        assertFailure(
+            completeJson().replace("\"value\":12.50", "\"value\":-1000e2147483646"),
+            SceneProblemCode.LIMIT_EXCEEDED,
+            path,
+        )
     }
 
     @Test

@@ -4,6 +4,7 @@ import java.math.BigDecimal
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 
 class ActionsTest {
     @Test
@@ -29,5 +30,16 @@ class ActionsTest {
 
         assertFailsWith<IllegalArgumentException> { DecimalArgument(BigDecimal("1e200")) }
         assertFailsWith<IllegalArgumentException> { DecimalArgument(BigDecimal("1e1000000")) }
+    }
+
+    @Test
+    fun `decimal arguments translate canonical scale overflow to the stable limit invariant`() {
+        listOf("1000e2147483646", "-1000e2147483646").forEach { token ->
+            val failure =
+                assertFailsWith<IllegalArgumentException> { DecimalArgument(BigDecimal(token)) }
+
+            assertEquals("Canonical decimal exceeds 128 characters.", failure.message)
+            assertIs<ArithmeticException>(failure.cause)
+        }
     }
 }
