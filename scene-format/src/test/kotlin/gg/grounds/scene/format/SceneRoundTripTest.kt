@@ -19,7 +19,9 @@ class SceneRoundTripTest {
 
     @Test
     fun `public decode encode decode preserves JSON escaped surrogate strings`() {
-        val json = validJson().replace("\"name\":\"Scene\"", "\"name\":\"high\\uD800 low\\uDC00 pair\\uD83D\\uDE00\"")
+        val json = """
+            {"schemaVersion":1,"id":"test:scene","metadata":{"name":"high\uD800 low\uDC00 pair\uD83D\uDE00","description":null,"tags":[]},"catalogs":{"assets":{"id":"test:assets","version":"1"},"actions":{"id":"test:actions","version":"1"}},"groups":[],"elements":[{"type":"prop","id":"prop","group":null,"transform":{"position":{"x":0,"y":0,"z":0},"rotation":{"yaw":0,"pitch":0,"roll":0},"scale":{"x":1,"y":1,"z":1}},"visible":true,"activation":"AUTOMATIC","asset":"test:prop","initialAnimation":null}]}
+        """.trimIndent()
 
         val first = assertIs<SceneDecodeResult.Success>(SceneJson.decode(json.encodeToByteArray())).scene
         val bytes = assertIs<SceneEncodeResult.Success>(SceneJson.encode(first)).bytes
