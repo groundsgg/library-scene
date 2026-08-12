@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  build:
+    uses: groundsgg/.github/.github/workflows/gradle-ci.yml@main
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: read

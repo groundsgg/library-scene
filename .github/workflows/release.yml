@@ -1,0 +1,18 @@
+name: Publish Release Packages
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    uses: groundsgg/.github/.github/workflows/gradle-publish.yml@main
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: write
