@@ -1,10 +1,12 @@
 package gg.grounds.scene.format
 
+import gg.grounds.scene.testkit.SceneFixtures
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import net.kyori.adventure.text.Component
 
 class SceneJsonEncodeTest {
     @Test
@@ -66,6 +68,95 @@ class SceneJsonEncodeTest {
         assertTrue("\"name\": \"high\\uD800 low\\uDC00 pair😀\"" in text)
         assertFalse('\uFFFD' in text)
         assertEquals(source, decoded.metadata.name)
+    }
+
+    @Test
+    fun `encode rejects canonical strings beyond the decoder limit`() {
+        val scene = withMetadata(SceneFixtures.minimal(), description = "a".repeat(65_537))
+
+        assertEncodingFailure(scene)
+    }
+
+    @Test
+    fun `encode rejects canonical bytes beyond the decoder limit`() {
+        val displayName = "a".repeat(4_096)
+        val groups = (0 until 4_096).map { SceneGroup(LocalId("g$it"), displayName) }
+        val base = SceneFixtures.minimal()
+        val scene =
+            SceneDocument(
+                base.schemaVersion,
+                base.id,
+                base.metadata,
+                base.catalogs,
+                groups,
+                base.elements,
+            )
+
+        assertEncodingFailure(scene)
+    }
+
+    @Test
+    fun `encode rejects component nesting beyond the decoder limit`() {
+        var label: Component = Component.text("leaf")
+        repeat(64) { label = Component.text("node").append(label) }
+        val base = SceneFixtures.complete()
+        val elements =
+            base.elements.map { element ->
+                if (element !is Npc || element.id.value != "tracked") element
+                else
+                    Npc(
+                        element.id,
+                        element.group,
+                        element.transform,
+                        element.visible,
+                        element.activation,
+                        element.body,
+                        label,
+                        element.labelOffset,
+                        element.look,
+                        element.initialAnimation,
+                        element.interactionBounds,
+                        element.proximity,
+                        element.bindings,
+                    )
+            }
+        val scene =
+            SceneDocument(
+                base.schemaVersion,
+                base.id,
+                base.metadata,
+                base.catalogs,
+                base.groups,
+                elements,
+            )
+
+        assertEncodingFailure(scene)
+    }
+
+    @Test
+    fun `encode accepts and round trips the maximum decoder string length`() {
+        val scene = withMetadata(SceneFixtures.minimal(), description = "a".repeat(65_536))
+
+        val encoded = assertIs<SceneEncodeResult.Success>(SceneJson.encode(scene))
+        val decoded = assertIs<SceneDecodeResult.Success>(SceneJson.decode(encoded.bytes))
+
+        assertEquals(scene, decoded.scene)
+    }
+
+    private fun withMetadata(scene: SceneDocument, description: String) =
+        SceneDocument(
+            scene.schemaVersion,
+            scene.id,
+            SceneMetadata(scene.metadata.name, description, scene.metadata.tags),
+            scene.catalogs,
+            scene.groups,
+            scene.elements,
+        )
+
+    private fun assertEncodingFailure(scene: SceneDocument) {
+        val failure = assertIs<SceneEncodeResult.Failure>(SceneJson.encode(scene))
+        assertEquals(listOf(SceneProblemCode.ENCODING_FAILURE), failure.problems.map { it.code })
+        assertEquals(listOf("/"), failure.problems.map { it.path })
     }
 }
 

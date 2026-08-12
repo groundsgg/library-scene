@@ -5,7 +5,9 @@ object SceneJson {
         val problems = SceneValidation.validateIntrinsic(scene).problems
         if (problems.isNotEmpty()) return SceneEncodeResult.Failure(problems)
         return try {
-            SceneEncodeResult.Success(CanonicalJson.write(WireMapping.toCanonicalWire(scene)))
+            val bytes = CanonicalJson.write(WireMapping.toCanonicalWire(scene))
+            SceneMapper.read(bytes)
+            SceneEncodeResult.Success(bytes)
         } catch (_: RuntimeException) {
             SceneEncodeResult.Failure(
                 listOf(
