@@ -1,6 +1,7 @@
 package gg.grounds.scene.format
 
 import gg.grounds.scene.format.SceneProblemCode.*
+import java.math.BigDecimal
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -118,6 +119,33 @@ class CatalogValidationTest {
         assertEquals(setOf(LocalId("one"), LocalId("two")), constraints.options)
         assertFailsWith<UnsupportedOperationException> {
             (constraints.options as MutableSet<LocalId>).clear()
+        }
+    }
+
+    @Test
+    fun `action parameters accept only matching typed constraints or no constraints`() {
+        val typedConstraints =
+            mapOf(
+                ActionParameterType.STRING to StringConstraints(0, 8, null),
+                ActionParameterType.LONG to LongConstraints(0, 8),
+                ActionParameterType.DECIMAL to DecimalConstraints(BigDecimal.ZERO, BigDecimal.TEN),
+                ActionParameterType.ENUM to EnumConstraints(setOf(LocalId("choice"))),
+                ActionParameterType.ASSET to AssetConstraints(AssetKind.PROP),
+            )
+
+        ActionParameterType.entries.forEach { type ->
+            ActionParameter(LocalId("value"), type, false, null, NoConstraints)
+            typedConstraints[type]?.let { constraints ->
+                ActionParameter(LocalId("value"), type, false, null, constraints)
+            }
+            typedConstraints
+                .filterKeys { it != type }
+                .values
+                .forEach { constraints ->
+                    assertFailsWith<IllegalArgumentException> {
+                        ActionParameter(LocalId("value"), type, false, null, constraints)
+                    }
+                }
         }
     }
 

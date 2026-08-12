@@ -125,6 +125,9 @@ data class ActionParameter(
     val constraints: ParameterConstraints,
 ) {
     init {
+        require(constraintsMatchType(type, constraints)) {
+            "Constraints do not match action parameter type."
+        }
         require(defaultValue == null || argumentMatches(defaultValue, type, constraints)) {
             "Default value does not satisfy action parameter."
         }
@@ -171,25 +174,59 @@ internal fun argumentMatches(
     when (type) {
         ActionParameterType.STRING ->
             argument is StringArgument &&
-                (constraints as? StringConstraints)?.let {
-                    argument.value.length in it.minLength..it.maxLength &&
-                        (it.pattern == null || Regex(it.pattern).matches(argument.value))
-                } != false
+                when (constraints) {
+                    NoConstraints -> true
+                    is StringConstraints ->
+                        argument.value.length in constraints.minLength..constraints.maxLength &&
+                            (constraints.pattern == null ||
+                                Regex(constraints.pattern).matches(argument.value))
+                    else -> false
+                }
         ActionParameterType.LONG ->
             argument is LongArgument &&
-                (constraints as? LongConstraints)?.let {
-                    (it.minInclusive == null || argument.value >= it.minInclusive) &&
-                        (it.maxInclusive == null || argument.value <= it.maxInclusive)
-                } != false
+                when (constraints) {
+                    NoConstraints -> true
+                    is LongConstraints ->
+                        (constraints.minInclusive == null ||
+                            argument.value >= constraints.minInclusive) &&
+                            (constraints.maxInclusive == null ||
+                                argument.value <= constraints.maxInclusive)
+                    else -> false
+                }
         ActionParameterType.DECIMAL ->
             argument is DecimalArgument &&
-                (constraints as? DecimalConstraints)?.let {
-                    (it.minInclusive == null || argument.value >= it.minInclusive) &&
-                        (it.maxInclusive == null || argument.value <= it.maxInclusive)
-                } != false
-        ActionParameterType.BOOLEAN -> argument is BooleanArgument
+                when (constraints) {
+                    NoConstraints -> true
+                    is DecimalConstraints ->
+                        (constraints.minInclusive == null ||
+                            argument.value >= constraints.minInclusive) &&
+                            (constraints.maxInclusive == null ||
+                                argument.value <= constraints.maxInclusive)
+                    else -> false
+                }
+        ActionParameterType.BOOLEAN -> argument is BooleanArgument && constraints == NoConstraints
         ActionParameterType.ENUM ->
             argument is EnumArgument &&
-                (constraints as? EnumConstraints)?.options?.contains(argument.value) != false
-        ActionParameterType.ASSET -> argument is AssetArgument
+                when (constraints) {
+                    NoConstraints -> true
+                    is EnumConstraints -> argument.value in constraints.options
+                    else -> false
+                }
+        ActionParameterType.ASSET ->
+            argument is AssetArgument &&
+                (constraints == NoConstraints || constraints is AssetConstraints)
     }
+
+private fun constraintsMatchType(
+    type: ActionParameterType,
+    constraints: ParameterConstraints,
+): Boolean =
+    constraints == NoConstraints ||
+        when (type) {
+            ActionParameterType.STRING -> constraints is StringConstraints
+            ActionParameterType.LONG -> constraints is LongConstraints
+            ActionParameterType.DECIMAL -> constraints is DecimalConstraints
+            ActionParameterType.BOOLEAN -> false
+            ActionParameterType.ENUM -> constraints is EnumConstraints
+            ActionParameterType.ASSET -> constraints is AssetConstraints
+        }
