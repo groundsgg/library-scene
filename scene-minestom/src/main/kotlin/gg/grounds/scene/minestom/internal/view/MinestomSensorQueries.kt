@@ -28,9 +28,9 @@ internal class MinestomSensorQueries(
 
     fun proximityPlayers(point: Point, radius: Double): List<Player> =
         buildList {
-                instance.getEntityTracker().nearbyEntities(
+                instance.getEntityTracker().nearbyEntitiesByChunkRange(
                     point,
-                    radius,
+                    ceil(radius / 16.0).toInt(),
                     EntityTracker.Target.PLAYERS,
                 ) { player ->
                     add(player)

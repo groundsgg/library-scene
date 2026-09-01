@@ -87,6 +87,22 @@ class ViewerStateTest {
     }
 
     @Test
+    fun `proximity preserves horizontal radius across large vertical separation`() {
+        val instance = instance()
+        val sensor = NpcSensorEngine(instance, AlwaysEligible)
+        val player =
+            player(PLAYER_ONE, Pos(2.0, 100.0, 0.0)).also {
+                it.setInstance(instance, it.position).join()
+            }
+        sensor.activate(sensorActive(instance, npc("guide", proximity = ProximitySensor(3.0, 4.0))))
+
+        assertEquals(
+            listOf(transition(PLAYER_ONE, "guide", SceneTrigger.PROXIMITY_ENTER)),
+            sensor.update(listOf(player)),
+        )
+    }
+
+    @Test
     fun `sensor candidate work excludes distant Interaction chunks`() {
         val instance = instance()
         val sensor = NpcSensorEngine(instance, AlwaysEligible)
