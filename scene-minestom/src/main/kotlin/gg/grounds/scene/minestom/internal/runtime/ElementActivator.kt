@@ -36,21 +36,31 @@ internal class ElementActivator(
         val generation = state.generation
         val requested = renderRequests(state.element)
         val npcElement = state.element as? Npc
-        val npc = npcElement?.let(::createNpcEntities)
-        val activation =
-            Activation(
-                state,
-                generation,
-                requested.size + (npc?.resourceCount() ?: 0),
-                requested.size,
-                npc,
-            )
+        val activation = Activation(state, generation, requested.size, requested.size)
 
+        npcElement?.let { npc ->
+            try {
+                val platformEntities = createNpcEntities(npc)
+                if (activation.attach(platformEntities)) {
+                    platformEntities.setInstanceStages(npc).forEach { stage ->
+                        stage.whenComplete { _, error ->
+                            if (error != null) activation.failed(error.unwrap())
+                            else activation.resourceCompleted()
+                        }
+                    }
+                }
+            } catch (error: Throwable) {
+                activation.failed(error)
+            }
+        }
         requested.forEachIndexed { index, request ->
             if (!activation.isOpen()) return@forEachIndexed
-            val factory = requireNotNull(renderers.rendererFor(request.context.asset, request.kind))
             val stage =
                 try {
+                    val factory =
+                        requireNotNull(renderers.rendererFor(request.context.asset, request.kind)) {
+                            "No renderer is available for ${request.context.asset.value}."
+                        }
                     factory.create(request.context)
                 } catch (error: Throwable) {
                     activation.failed(error)
@@ -61,16 +71,7 @@ internal class ElementActivator(
                 else activation.handleCompleted(index, handle)
             }
         }
-        if (activation.isOpen()) {
-            (npcElement?.let { npc?.setInstanceStages(it) ?: emptyList() }).orEmpty().forEach {
-                stage ->
-                stage.whenComplete { _, error ->
-                    if (error != null) activation.failed(error.unwrap())
-                    else activation.resourceCompleted()
-                }
-            }
-        }
-        if (requested.isEmpty() && npc == null) activation.completed()
+        if (requested.isEmpty() && npcElement == null) activation.completed()
         return activation.future
     }
 
@@ -115,21 +116,28 @@ internal class ElementActivator(
         )
 
     private fun createNpcEntities(npc: Npc): NpcPlatformEntities {
-        val transform = SceneRenderTransform(npc.transform, null)
-        val bounds = npc.interactionBounds.transformed(transform.affine())
         val interaction = Entity(EntityType.INTERACTION)
-        (interaction.entityMeta as InteractionMeta).apply {
-            width = (bounds.max.x - bounds.min.x).toFloat()
-            height = (bounds.max.y - bounds.min.y).toFloat()
-            response = true
-        }
-        val label =
-            npc.label?.let { text ->
-                Entity(EntityType.TEXT_DISPLAY).also { entity ->
-                    (entity.entityMeta as TextDisplayMeta).text = text
-                }
+        var label: Entity? = null
+        try {
+            val transform = SceneRenderTransform(npc.transform, null)
+            val bounds = npc.interactionBounds.transformed(transform.affine())
+            (interaction.entityMeta as InteractionMeta).apply {
+                width = (bounds.max.x - bounds.min.x).toFloat()
+                height = (bounds.max.y - bounds.min.y).toFloat()
+                response = true
             }
-        return NpcPlatformEntities(label, interaction)
+            label =
+                npc.label?.let { text ->
+                    Entity(EntityType.TEXT_DISPLAY).also { entity ->
+                        (entity.entityMeta as TextDisplayMeta).text = text
+                    }
+                }
+            return NpcPlatformEntities(label, interaction)
+        } catch (error: Throwable) {
+            label?.remove()
+            interaction.remove()
+            throw error
+        }
     }
 
     private fun NpcPlatformEntities.setInstanceStages(npc: Npc): List<CompletionStage<Void>> {
@@ -163,10 +171,10 @@ internal class ElementActivator(
         private val generation: Long,
         private var pending: Int,
         handleCount: Int,
-        private val npc: NpcPlatformEntities?,
     ) {
         val future = CompletableFuture<ActiveElement>()
         private val handles = arrayOfNulls<RenderedAssetHandle>(handleCount)
+        private var npc: NpcPlatformEntities? = null
         private var terminal = false
 
         fun handleCompleted(index: Int, handle: RenderedAssetHandle) {
@@ -181,6 +189,18 @@ internal class ElementActivator(
         }
 
         fun isOpen(): Boolean = synchronized(this) { !terminal }
+
+        fun attach(platformEntities: NpcPlatformEntities): Boolean =
+            synchronized(this) {
+                if (terminal) {
+                    platformEntities.close()
+                    false
+                } else {
+                    npc = platformEntities
+                    pending += platformEntities.resourceCount()
+                    true
+                }
+            }
 
         fun resourceCompleted() = synchronized(this) { if (!terminal) resourceCompletedLocked() }
 

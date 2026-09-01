@@ -2,6 +2,7 @@ package gg.grounds.scene.minestom.internal.runtime
 
 import gg.grounds.scene.format.*
 import gg.grounds.scene.minestom.*
+import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
 import kotlin.test.Test
@@ -15,6 +16,8 @@ import net.minestom.server.MinecraftServer
 import net.minestom.server.entity.metadata.display.TextDisplayMeta
 import net.minestom.server.entity.metadata.other.InteractionMeta
 import net.minestom.server.instance.Instance
+import net.minestom.server.instance.InstanceContainer
+import net.minestom.server.world.DimensionType
 
 class ElementActivatorTest {
     @Test
@@ -123,6 +126,16 @@ class ElementActivatorTest {
     }
 
     @Test
+    fun `keeps npc platform entities in an activation with an already completed renderer future`() {
+        val factory = RecordingFactory().apply { completeImmediately = true }
+
+        val active = activator(factory).activate(state(npc())).await()
+
+        assertNotNull(active.npcEntities)
+        assertEquals(1, active.handles.size)
+    }
+
+    @Test
     fun `rolls back completed composite handles when a later renderer fails`() {
         val factory = RecordingFactory()
         val state =
@@ -148,6 +161,51 @@ class ElementActivatorTest {
     }
 
     @Test
+    fun `closes a pending renderer handle after another renderer fails`() {
+        val factory = RecordingFactory()
+        val state = state(composite("a", "b", "c"))
+
+        val activation = activator(factory).activate(state)
+        factory.complete(0)
+        factory.fail(1)
+
+        assertFailsWith<Exception> { activation.await() }
+        factory.complete(2)
+
+        assertTrueEventually { factory.handles.all { it.closed } }
+    }
+
+    @Test
+    fun `returns a failed stage and closes completed handles when a renderer is missing`() {
+        val factory = RecordingFactory()
+        val state = state(composite("a", "b"))
+        val activator =
+            activator(
+                SceneAssetRendererRegistry { asset, _ ->
+                    if (asset.value == "test:a") factory else null
+                }
+            )
+
+        val activation = activator.activate(state)
+        factory.complete(0)
+
+        assertFailsWith<Exception> { activation.await() }
+        assertTrueEventually { factory.handles.single().closed }
+    }
+
+    @Test
+    fun `returns a failed stage and closes handles when npc attachment throws synchronously`() {
+        val factory = RecordingFactory()
+        val activator =
+            activator(SceneAssetRendererRegistry { _, _ -> factory }, unregisteredInstance())
+
+        val activation = activator.activate(state(npc()))
+
+        assertFailsWith<Exception> { activation.await() }
+        assertTrue(factory.contexts.isEmpty())
+    }
+
+    @Test
     fun `closes a handle that completes after its activation generation becomes stale`() {
         val factory = RecordingFactory()
         val state = state(prop())
@@ -161,15 +219,19 @@ class ElementActivatorTest {
     }
 
     private fun activator(factory: RecordingFactory): ElementActivator =
-        ElementActivator(
-            instance(),
-            SceneAssetRendererRegistry { _, _ -> factory },
-            TestClock(5_000_000L),
-        )
+        activator(SceneAssetRendererRegistry { _, _ -> factory })
+
+    private fun activator(renderers: SceneAssetRendererRegistry, instance: Instance = instance()) =
+        ElementActivator(instance, renderers, TestClock(5_000_000L))
 
     private fun instance(): Instance {
         MinecraftServer.init()
         return MinecraftServer.getInstanceManager().createInstanceContainer()
+    }
+
+    private fun unregisteredInstance(): Instance {
+        MinecraftServer.init()
+        return InstanceContainer(UUID.randomUUID(), DimensionType.OVERWORLD)
     }
 
     private fun state(
@@ -184,6 +246,30 @@ class ElementActivatorTest {
             transform(),
             asset = AssetKey("test:prop"),
             initialAnimation = null,
+        )
+
+    private fun composite(vararg partIds: String) =
+        CompositeProp(
+            LocalId("composite"),
+            null,
+            transform(),
+            parts =
+                partIds.map { id -> CompositePart(LocalId(id), AssetKey("test:$id"), transform()) },
+        )
+
+    private fun npc() =
+        Npc(
+            LocalId("npc"),
+            null,
+            transform(),
+            body = AssetKey("test:npc"),
+            label = null,
+            labelOffset = Vec3(0.0, 0.0, 0.0),
+            look = LookBehavior.Fixed,
+            initialAnimation = null,
+            interactionBounds = LocalBounds(Vec3(0.0, 0.0, 0.0), Vec3(1.0, 1.0, 1.0)),
+            proximity = null,
+            bindings = emptyList(),
         )
 
     private fun transform(position: Vec3 = Vec3(0.0, 0.0, 0.0)) =
@@ -207,12 +293,16 @@ class ElementActivatorTest {
         val contexts = mutableListOf<SceneAssetRenderContext>()
         val futures = mutableListOf<CompletableFuture<RenderedAssetHandle>>()
         val handles = mutableListOf<RecordingHandle>()
+        var completeImmediately = false
 
         override fun create(
             context: SceneAssetRenderContext
         ): CompletableFuture<RenderedAssetHandle> {
             contexts += context
-            return CompletableFuture<RenderedAssetHandle>().also(futures::add)
+            return CompletableFuture<RenderedAssetHandle>().also { future ->
+                futures += future
+                if (completeImmediately) complete(futures.lastIndex)
+            }
         }
 
         fun complete(index: Int) {
