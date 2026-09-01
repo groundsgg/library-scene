@@ -25,6 +25,45 @@ internal class AffineTransform private constructor(private val values: DoubleArr
             values[8] * point.x + values[9] * point.y + values[10] * point.z + values[11],
         )
 
+    fun transformVector(vector: Vec3): Vec3 =
+        Vec3(
+            values[0] * vector.x + values[1] * vector.y + values[2] * vector.z,
+            values[4] * vector.x + values[5] * vector.y + values[6] * vector.z,
+            values[8] * vector.x + values[9] * vector.y + values[10] * vector.z,
+        )
+
+    fun inverse(): AffineTransform {
+        val determinant =
+            values[0] * (values[5] * values[10] - values[6] * values[9]) -
+                values[1] * (values[4] * values[10] - values[6] * values[8]) +
+                values[2] * (values[4] * values[9] - values[5] * values[8])
+        require(determinant != 0.0) { "Affine transform must be invertible." }
+        val inverseDeterminant = 1.0 / determinant
+        val result =
+            doubleArrayOf(
+                (values[5] * values[10] - values[6] * values[9]) * inverseDeterminant,
+                (values[2] * values[9] - values[1] * values[10]) * inverseDeterminant,
+                (values[1] * values[6] - values[2] * values[5]) * inverseDeterminant,
+                0.0,
+                (values[6] * values[8] - values[4] * values[10]) * inverseDeterminant,
+                (values[0] * values[10] - values[2] * values[8]) * inverseDeterminant,
+                (values[2] * values[4] - values[0] * values[6]) * inverseDeterminant,
+                0.0,
+                (values[4] * values[9] - values[5] * values[8]) * inverseDeterminant,
+                (values[1] * values[8] - values[0] * values[9]) * inverseDeterminant,
+                (values[0] * values[5] - values[1] * values[4]) * inverseDeterminant,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+            )
+        result[3] = -(result[0] * values[3] + result[1] * values[7] + result[2] * values[11])
+        result[7] = -(result[4] * values[3] + result[5] * values[7] + result[6] * values[11])
+        result[11] = -(result[8] * values[3] + result[9] * values[7] + result[10] * values[11])
+        return AffineTransform(result)
+    }
+
     companion object {
         fun from(transform: Transform): AffineTransform {
             val yaw = Math.toRadians(transform.rotation.yaw)

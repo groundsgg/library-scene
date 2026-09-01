@@ -237,7 +237,15 @@ internal class ElementActivator(
                 completedHandles.forEach { it.startAnimation(animation, elapsedMillis) }
             }
             npc?.let { interactionIds[it.interaction.uuid] = state.element.id }
-            future.complete(ActiveElement(state.element.id, generation, completedHandles, npc))
+            future.complete(
+                ActiveElement(
+                    state.element.id,
+                    generation,
+                    completedHandles,
+                    npc,
+                    state.element as? Npc,
+                )
+            )
         }
 
         private fun closeResources(
