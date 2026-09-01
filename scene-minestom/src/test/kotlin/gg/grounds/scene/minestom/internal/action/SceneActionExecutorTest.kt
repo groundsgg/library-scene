@@ -773,6 +773,41 @@ class SceneActionExecutorTest {
         assertSame(exceptionalCause, diagnostics[2].cause)
     }
 
+    @Test
+    fun `application scheduler rejection reports the original cause without current-state read`() {
+        val instance = instance()
+        val player = player(instance)
+        val schedulerFailure = IllegalStateException("application callback scheduler rejected")
+        val diagnostics = mutableListOf<SceneActionDiagnostic>()
+        val applicationCompletion = CompletableFuture<SceneActionResult>()
+        var currentChecks = 0
+        val executor =
+            executor(
+                instance,
+                player,
+                emptyMap(),
+                actions = SceneActionRegistry { SceneActionHandler { applicationCompletion } },
+                isCurrent = {
+                    currentChecks++
+                    true
+                },
+                schedule = { throw schedulerFailure },
+                reportFallbackDiagnostic = diagnostics::add,
+            )
+
+        val completion = executor.execute(chain(player, application()))
+        val checksBeforeCallback = currentChecks
+        applicationCompletion.complete(SceneActionResult.Success)
+
+        assertEquals(ChainOutcome.FAILED, completion.await())
+        assertEquals(checksBeforeCallback, currentChecks)
+        val diagnostic = assertEquals(1, diagnostics.size).let { diagnostics.single() }
+        assertEquals("APPLICATION_CALLBACK_SCHEDULE_FAILED", diagnostic.code)
+        assertEquals(ChainOutcome.FAILED, diagnostic.outcome)
+        assertEquals("Application action callback could not be scheduled.", diagnostic.diagnostic)
+        assertSame(schedulerFailure, diagnostic.cause)
+    }
+
     private fun executor(
         instance: Instance,
         player: Player,
@@ -792,6 +827,7 @@ class SceneActionExecutorTest {
             },
         clock: SceneClock = ManualClock(11L),
         reportDiagnostic: (SceneActionDiagnostic) -> Unit = {},
+        reportFallbackDiagnostic: (SceneActionDiagnostic) -> Unit = reportDiagnostic,
     ) =
         SceneActionExecutor(
             instance,
@@ -808,6 +844,7 @@ class SceneActionExecutorTest {
             registerCompletion,
             clock,
             reportDiagnostic,
+            reportFallbackDiagnostic,
         )
 
     private fun chain(player: Player, vararg actions: SceneAction) =

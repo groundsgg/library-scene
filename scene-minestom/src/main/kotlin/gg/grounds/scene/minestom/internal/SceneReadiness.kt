@@ -39,22 +39,28 @@ internal object SceneReadiness {
     fun check(request: SceneReadinessRequest): List<SceneRuntimeProblem> = prepare(request).problems
 
     fun prepare(request: SceneReadinessRequest): SceneReadinessResult {
+        if (request.identity.sceneId != request.scene.id) {
+            return SceneReadinessResult(
+                listOf(
+                    problem(
+                        SceneRuntimeProblemCode.INVALID_CONFIG,
+                        "identity/sceneId",
+                        null,
+                        "Runtime identity scene ID must match the Scene document ID.",
+                    )
+                ),
+                SceneRuntimeCapabilities(
+                    Collections.unmodifiableMap(LinkedHashMap()),
+                    Collections.unmodifiableMap(LinkedHashMap()),
+                ),
+            )
+        }
         val rendererFactories = linkedMapOf<RendererCapabilityKey, SceneAssetRendererFactory>()
         val resolvedRendererKeys = mutableSetOf<RendererCapabilityKey>()
         val actionHandlers = linkedMapOf<ActionKey, SceneActionHandler>()
         val resolvedActionKeys = mutableSetOf<ActionKey>()
         val problems =
             buildList {
-                    if (request.identity.sceneId != request.scene.id) {
-                        add(
-                            problem(
-                                SceneRuntimeProblemCode.INVALID_CONFIG,
-                                "identity/sceneId",
-                                null,
-                                "Runtime identity scene ID must match the Scene document ID.",
-                            )
-                        )
-                    }
                     SceneValidation.validateCatalogs(request.scene, request.assets, request.actions)
                         .problems
                         .forEach {

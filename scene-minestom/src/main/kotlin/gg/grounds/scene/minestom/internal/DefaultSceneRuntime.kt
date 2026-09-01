@@ -124,6 +124,7 @@ private constructor(
                 ::marshal,
                 clock = request.clock,
                 reportDiagnostic = ::reportActionDiagnostic,
+                reportFallbackDiagnostic = ::reportActionDiagnosticFallback,
             )
         events =
             MinestomSceneEvents(
@@ -840,6 +841,20 @@ private constructor(
 
     companion object {
         private val LOGGER = LoggerFactory.getLogger(DefaultSceneRuntime::class.java)
+
+        private fun reportActionDiagnosticFallback(diagnostic: SceneActionDiagnostic) {
+            LOGGER.error(
+                "Scene action callback scheduler rejection code={} outcome={} element={} player={} trigger={} binding={} diagnostic={}",
+                diagnostic.code,
+                diagnostic.outcome,
+                diagnostic.elementId.value,
+                diagnostic.playerId,
+                diagnostic.trigger,
+                diagnostic.bindingIndex,
+                diagnostic.diagnostic,
+                diagnostic.cause,
+            )
+        }
 
         fun create(
             request: SceneRuntimeRequest,

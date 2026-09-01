@@ -320,7 +320,7 @@ class SceneRuntimeLifecycleIntegrationTest {
     }
 
     @Test
-    fun `initial scheduler rejection reports the original cause`() {
+    fun `runtime creation scheduler rejection completes a structured failure`() {
         val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
         val runtimeRequest =
             request(

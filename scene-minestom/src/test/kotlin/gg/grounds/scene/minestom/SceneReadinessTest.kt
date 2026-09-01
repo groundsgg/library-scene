@@ -153,6 +153,71 @@ class SceneReadinessTest {
     }
 
     @Test
+    fun `scene id mismatch returns before every capability lookup`() {
+        var rendererLookups = 0
+        var effectLookups = 0
+        var actionLookups = 0
+        val readiness =
+            SceneReadiness.prepare(
+                request(
+                        SceneAssetRendererRegistry { _, _ ->
+                            rendererLookups++
+                            error("renderer lookup must not happen")
+                        },
+                        object : SceneEffectSink {
+                            override fun supports(asset: AssetKey, kind: AssetKind): Boolean {
+                                effectLookups++
+                                error("effect lookup must not happen")
+                            }
+
+                            override fun playSound(
+                                player: net.minestom.server.entity.Player,
+                                sound: AssetKey,
+                                volume: Double,
+                                pitch: Double,
+                            ) = error("effect execution must not happen")
+
+                            override fun emitParticle(
+                                instance: net.minestom.server.instance.Instance,
+                                particle: AssetKey,
+                                point: net.minestom.server.coordinate.Point,
+                                count: Int,
+                                offset: Vec3,
+                                speed: Double,
+                            ) = error("effect execution must not happen")
+                        },
+                        SceneActionRegistry {
+                            actionLookups++
+                            error("action lookup must not happen")
+                        },
+                    )
+                    .copy(identity = SceneRuntimeIdentity(SceneId("test:other"), "map", 1))
+            )
+
+        assertEquals(
+            listOf(SceneRuntimeProblemCode.INVALID_CONFIG),
+            readiness.problems.map { it.code },
+        )
+        assertEquals("identity/sceneId", readiness.problems.single().path)
+        assertEquals(0, rendererLookups)
+        assertEquals(0, effectLookups)
+        assertEquals(0, actionLookups)
+        val capabilities = assertNotNull(readiness.capabilities)
+        assertEquals(emptyMap(), capabilities.rendererFactories)
+        assertEquals(emptyMap(), capabilities.actionHandlers)
+        assertFailsWith<UnsupportedOperationException> {
+            @Suppress("UNCHECKED_CAST")
+            (capabilities.rendererFactories
+                    as MutableMap<RendererCapabilityKey, SceneAssetRendererFactory>)
+                .clear()
+        }
+        assertFailsWith<UnsupportedOperationException> {
+            @Suppress("UNCHECKED_CAST")
+            (capabilities.actionHandlers as MutableMap<ActionKey, SceneActionHandler>).clear()
+        }
+    }
+
+    @Test
     fun `invisible elements require no renderer capability`() {
         val base = scene()
         val invisibleScene =

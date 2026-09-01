@@ -53,6 +53,7 @@ internal class SceneActionExecutor(
         },
     private val clock: SceneClock,
     private val reportDiagnostic: (SceneActionDiagnostic) -> Unit = {},
+    private val reportFallbackDiagnostic: (SceneActionDiagnostic) -> Unit = reportDiagnostic,
 ) {
     private val targets = ActionTargetResolver(elements, activeElements)
 
@@ -145,6 +146,13 @@ internal class SceneActionExecutor(
                 completeFailureOrStale(chain, completion)
                 return
             }
+        val callbackScheduleFailure =
+            ActionDiagnosticFields(
+                chain.input.playerId,
+                chain.input.npcId,
+                chain.input.trigger,
+                chain.key.bindingIndex,
+            )
         try {
             registerCompletion(
                 stage,
@@ -172,7 +180,15 @@ internal class SceneActionExecutor(
                                 }
                             }
                         )
-                    } catch (_: Throwable) {
+                    } catch (error: Throwable) {
+                        reportFallback(
+                            callbackScheduleFailure.diagnostic(
+                                ChainOutcome.FAILED,
+                                "APPLICATION_CALLBACK_SCHEDULE_FAILED",
+                                "Application action callback could not be scheduled.",
+                                error,
+                            )
+                        )
                         completion.complete(ChainOutcome.FAILED)
                     }
                 },
@@ -348,21 +364,49 @@ internal class SceneActionExecutor(
         diagnostic: String,
         cause: Throwable?,
     ) {
-        try {
-            reportDiagnostic(
-                SceneActionDiagnostic(
+        report(
+            ActionDiagnosticFields(
                     chain.input.playerId,
                     chain.input.npcId,
                     chain.input.trigger,
                     chain.key.bindingIndex,
-                    outcome,
-                    code,
-                    diagnostic,
-                    cause,
                 )
-            )
+                .diagnostic(outcome, code, diagnostic, cause)
+        )
+    }
+
+    private fun report(diagnostic: SceneActionDiagnostic) {
+        try {
+            reportDiagnostic(diagnostic)
         } catch (_: Throwable) {
             // Reporting must never replace the action outcome.
         }
+    }
+
+    private fun reportFallback(diagnostic: SceneActionDiagnostic) {
+        try {
+            reportFallbackDiagnostic(diagnostic)
+        } catch (_: Throwable) {
+            // Reporting must never replace the action outcome.
+        }
+    }
+
+    private data class ActionDiagnosticFields(
+        val playerId: java.util.UUID,
+        val elementId: LocalId,
+        val trigger: SceneTrigger,
+        val bindingIndex: Int,
+    ) {
+        fun diagnostic(outcome: ChainOutcome, code: String, text: String, cause: Throwable?) =
+            SceneActionDiagnostic(
+                playerId,
+                elementId,
+                trigger,
+                bindingIndex,
+                outcome,
+                code,
+                text,
+                cause,
+            )
     }
 }
