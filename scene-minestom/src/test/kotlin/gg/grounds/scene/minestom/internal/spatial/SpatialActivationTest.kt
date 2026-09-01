@@ -7,6 +7,9 @@ import gg.grounds.scene.minestom.SceneClock
 import gg.grounds.scene.minestom.SceneRuntimeConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 import net.minestom.server.coordinate.Vec
 
 class SpatialActivationTest {
@@ -69,12 +72,32 @@ class SpatialActivationTest {
         val controller = controller(element)
 
         assertEquals(
-            listOf(ActivationTransition(element.id, ActivationTransitionKind.ACTIVATE)),
+            listOf(ActivationTransition(element.id, ActivationTransitionKind.ACTIVATE, 1L)),
             controller.evaluate(listOf(Vec.ZERO)),
         )
-        controller.markActivating(element.id)
+        assertTrue(
+            controller.beginActivation(
+                ActivationTransition(element.id, ActivationTransitionKind.ACTIVATE, 1L)
+            )
+        )
 
         assertEquals(listOf(element.id), controller.reevaluate(emptyList()))
+    }
+
+    @Test
+    fun `dispatch rejects an activation transition with a stale desire epoch`() {
+        val element =
+            IndexedElement(LocalId("automatic"), ActivationPolicy.AUTOMATIC, Vec3(0.0, 0.0, 0.0))
+        val controller = controller(element)
+
+        val stale = controller.evaluate(listOf(Vec.ZERO)).single()
+        controller.reevaluate(emptyList())
+        controller.reevaluate(listOf(Vec.ZERO))
+        val current = controller.drainTransitions().single()
+
+        assertNotEquals(stale.epoch, current.epoch)
+        assertFalse(controller.beginActivation(stale))
+        assertTrue(controller.beginActivation(current))
     }
 
     @Test
@@ -95,8 +118,8 @@ class SpatialActivationTest {
 
         assertEquals(
             listOf(
-                ActivationTransition(LocalId("automatic"), ActivationTransitionKind.ACTIVATE),
-                ActivationTransition(LocalId("always"), ActivationTransitionKind.ACTIVATE),
+                ActivationTransition(LocalId("automatic"), ActivationTransitionKind.ACTIVATE, 1L),
+                ActivationTransition(LocalId("always"), ActivationTransitionKind.ACTIVATE, 0L),
             ),
             controller.evaluate(listOf(Vec(0.0, 0.0, 0.0))),
         )
@@ -114,7 +137,7 @@ class SpatialActivationTest {
                 ),
                 clock = clock,
             )
-        controller.markActive(LocalId("automatic"))
+        activate(controller, LocalId("automatic"), Vec.ZERO)
 
         assertEquals(emptyList(), controller.evaluate(listOf(Vec(80.0, 0.0, 0.0))))
         assertEquals(emptyList(), controller.evaluate(emptyList()))
@@ -122,7 +145,9 @@ class SpatialActivationTest {
         assertEquals(emptyList(), controller.evaluate(emptyList()))
         clock.advanceMillis(1)
         assertEquals(
-            listOf(ActivationTransition(LocalId("automatic"), ActivationTransitionKind.DEACTIVATE)),
+            listOf(
+                ActivationTransition(LocalId("automatic"), ActivationTransitionKind.DEACTIVATE, 2L)
+            ),
             controller.evaluate(emptyList()),
         )
     }
@@ -139,7 +164,7 @@ class SpatialActivationTest {
                 ),
                 clock = clock,
             )
-        controller.markActive(LocalId("automatic"))
+        activate(controller, LocalId("automatic"), Vec.ZERO)
 
         controller.evaluate(emptyList())
         clock.advanceMillis(4_000)
@@ -151,26 +176,32 @@ class SpatialActivationTest {
     @Test
     fun `re-entry cancels a queued automatic deactivation before delayed dispatch`() {
         val clock = TestClock()
-        val target =
-            IndexedElement(LocalId("target"), ActivationPolicy.AUTOMATIC, Vec3(320.0, 0.0, 0.0))
-        val controller =
-            controller(
-                List(512) {
-                    IndexedElement(
-                        LocalId("always${it.toString().padStart(3, '0')}"),
-                        ActivationPolicy.ALWAYS,
-                        Vec3(0.0, 0.0, 0.0),
-                    )
-                } + target,
-                clock,
-                256,
-            )
-        controller.markActive(target.id)
+        val elements =
+            List(257) {
+                IndexedElement(
+                    LocalId("item${it.toString().padStart(3, '0')}"),
+                    ActivationPolicy.AUTOMATIC,
+                    Vec3(0.0, 0.0, 0.0),
+                )
+            } + IndexedElement(LocalId("target"), ActivationPolicy.AUTOMATIC, Vec3(320.0, 0.0, 0.0))
+        val controller = controller(elements, clock, 256)
+        controller.reevaluate(listOf(Vec.ZERO, Vec(320.0, 0.0, 0.0)))
+        val transitions = controller.drainTransitions() + controller.drainTransitions()
+        transitions.forEach { transition ->
+            assertTrue(controller.beginActivation(transition))
+            assertTrue(controller.markActive(transition.elementId, transition.epoch))
+        }
 
-        assertEquals(256, controller.evaluate(emptyList()).size)
+        assertEquals(emptyList(), controller.evaluate(emptyList()))
         clock.advanceMillis(5_000)
         assertEquals(256, controller.evaluate(emptyList()).size)
-        assertEquals(emptyList(), controller.evaluate(listOf(Vec(320.0, 0.0, 0.0))))
+        controller.reevaluate(listOf(Vec(320.0, 0.0, 0.0)))
+
+        assertTrue(
+            controller.drainTransitions().none {
+                it.elementId == LocalId("target") && it.kind == ActivationTransitionKind.DEACTIVATE
+            }
+        )
     }
 
     @Test
@@ -193,11 +224,18 @@ class SpatialActivationTest {
         assertEquals(LocalId("item255"), first.last().elementId)
         assertEquals(
             listOf(
-                ActivationTransition(LocalId("item256"), ActivationTransitionKind.ACTIVATE),
-                ActivationTransition(LocalId("item257"), ActivationTransitionKind.ACTIVATE),
+                ActivationTransition(LocalId("item256"), ActivationTransitionKind.ACTIVATE, 0L),
+                ActivationTransition(LocalId("item257"), ActivationTransitionKind.ACTIVATE, 0L),
             ),
             controller.evaluate(emptyList()),
         )
+    }
+
+    private fun activate(controller: ActivationController, elementId: LocalId, position: Vec) {
+        controller.reevaluate(listOf(position))
+        val transition = controller.drainTransitions().single { it.elementId == elementId }
+        assertTrue(controller.beginActivation(transition))
+        assertTrue(controller.markActive(elementId, transition.epoch))
     }
 
     private fun controller(

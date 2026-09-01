@@ -13,7 +13,11 @@ internal enum class ActivationTransitionKind {
     DEACTIVATE,
 }
 
-internal data class ActivationTransition(val elementId: LocalId, val kind: ActivationTransitionKind)
+internal data class ActivationTransition(
+    val elementId: LocalId,
+    val kind: ActivationTransitionKind,
+    val epoch: Long,
+)
 
 internal class ActivationController(
     private val index: SpatialIndex,
@@ -34,6 +38,8 @@ internal class ActivationController(
     private val active = linkedSetOf<LocalId>()
     private val activating = linkedSetOf<LocalId>()
     private val failed = linkedSetOf<LocalId>()
+    private val desireEpoch = mutableMapOf<LocalId, Long>()
+    private val desired = linkedSetOf<LocalId>()
     private val pending = mutableSetOf<ActivationTransition>()
     private val outsideSince = mutableMapOf<LocalId, Long>()
     private val queued = mutableListOf<ActivationTransition>()
@@ -42,7 +48,14 @@ internal class ActivationController(
         index.elements().mapIndexed { rank, element -> element.id to rank }.toMap()
 
     init {
-        always.forEach { request(it, ActivationTransitionKind.ACTIVATE) }
+        index
+            .elements()
+            .filter { it.policy == ActivationPolicy.AUTOMATIC }
+            .forEach { desireEpoch[it.id] = 0L }
+        always.forEach {
+            desired.add(it)
+            request(it, ActivationTransitionKind.ACTIVATE)
+        }
     }
 
     fun evaluate(eligiblePlayerPositions: List<Point>): List<ActivationTransition> {
@@ -58,29 +71,33 @@ internal class ActivationController(
         lastVisited = (visited + active + activating).size
         val now = clock.nanoTime()
 
-        pending
-            .filter { it.kind == ActivationTransitionKind.ACTIVATE }
-            .map { it.elementId }
-            .filter { it !in always && it !in nearActivation }
-            .forEach { cancel(it, ActivationTransitionKind.ACTIVATE) }
-        nearActivation
-            .asSequence()
-            .filter { it in inactive && it !in failed }
+        val nextDesired =
+            nearActivation.filterTo(linkedSetOf()) {
+                elementsById.getValue(it).policy == ActivationPolicy.AUTOMATIC
+            }
+        val invalidated = mutableListOf<LocalId>()
+        desired
+            .filter { it !in always && it !in nextDesired }
             .sortedWith(elementOrder)
-            .forEach { request(it, ActivationTransitionKind.ACTIVATE) }
+            .forEach { elementId ->
+                changeDesire(elementId, false)
+                cancel(elementId, ActivationTransitionKind.ACTIVATE)
+                if (activating.remove(elementId)) {
+                    inactive.add(elementId)
+                    invalidated += elementId
+                }
+            }
+        nextDesired
+            .filter { it !in desired }
+            .sortedWith(elementOrder)
+            .forEach { elementId ->
+                changeDesire(elementId, true)
+                if (elementId in inactive && elementId !in failed)
+                    request(elementId, ActivationTransitionKind.ACTIVATE)
+            }
         active.toList().forEach { elementId ->
             evaluateActive(elementsById.getValue(elementId), nearDeactivation, now)
         }
-        val invalidated =
-            activating
-                .filter { it !in always && it !in nearActivation }
-                .sortedWith(elementOrder)
-                .also { ids ->
-                    ids.forEach { elementId ->
-                        activating.remove(elementId)
-                        inactive.add(elementId)
-                    }
-                }
         queued.sortWith(transitionOrder)
         return invalidated
     }
@@ -88,18 +105,34 @@ internal class ActivationController(
     fun drainTransitions(): List<ActivationTransition> =
         queued.take(config.transitionBudgetPerTick).also { queued.subList(0, it.size).clear() }
 
-    fun markActivating(elementId: LocalId) {
-        if (elementId in failed) return
-        inactive.remove(elementId)
-        activating.add(elementId)
-        cancel(elementId, ActivationTransitionKind.ACTIVATE)
+    fun beginActivation(transition: ActivationTransition): Boolean {
+        if (
+            transition.kind != ActivationTransitionKind.ACTIVATE ||
+                transition !in pending ||
+                transition.elementId !in desired ||
+                desireEpoch(transition.elementId) != transition.epoch ||
+                transition.elementId in active ||
+                transition.elementId in activating ||
+                transition.elementId in failed
+        )
+            return false
+        pending.remove(transition)
+        queued.remove(transition)
+        inactive.remove(transition.elementId)
+        activating.add(transition.elementId)
+        return true
     }
 
-    fun markActive(elementId: LocalId) {
+    fun isActivationCurrent(elementId: LocalId, epoch: Long): Boolean =
+        elementId in desired && desireEpoch(elementId) == epoch && elementId in activating
+
+    fun markActive(elementId: LocalId, epoch: Long): Boolean {
+        if (!isActivationCurrent(elementId, epoch)) return false
         inactive.remove(elementId)
         activating.remove(elementId)
         if (elementId !in always) active.add(elementId)
         clearPending(elementId)
+        return true
     }
 
     fun markInactive(elementId: LocalId) {
@@ -133,9 +166,17 @@ internal class ActivationController(
     }
 
     private fun request(elementId: LocalId, kind: ActivationTransitionKind) {
-        val transition = ActivationTransition(elementId, kind)
+        val transition = ActivationTransition(elementId, kind, desireEpoch(elementId))
         if (pending.add(transition)) queued += transition
     }
+
+    private fun changeDesire(elementId: LocalId, value: Boolean) {
+        if ((elementId in desired) == value) return
+        desireEpoch[elementId] = desireEpoch(elementId) + 1L
+        if (value) desired.add(elementId) else desired.remove(elementId)
+    }
+
+    private fun desireEpoch(elementId: LocalId): Long = desireEpoch[elementId] ?: 0L
 
     private fun graceNanos(): Long = millisToNanosSaturated(config.deactivationGraceMillis)
 
@@ -145,9 +186,8 @@ internal class ActivationController(
     }
 
     private fun cancel(elementId: LocalId, kind: ActivationTransitionKind) {
-        val transition = ActivationTransition(elementId, kind)
-        pending.remove(transition)
-        queued.remove(transition)
+        pending.removeAll { it.elementId == elementId && it.kind == kind }
+        queued.removeAll { it.elementId == elementId && it.kind == kind }
     }
 
     private val transitionOrder =

@@ -1,6 +1,9 @@
 package gg.grounds.scene.minestom
 
 import gg.grounds.scene.format.*
+import gg.grounds.scene.minestom.internal.DefaultSceneRuntime
+import gg.grounds.scene.minestom.internal.SceneReadiness
+import gg.grounds.scene.minestom.internal.SceneReadinessRequest
 import java.net.InetSocketAddress
 import java.net.SocketAddress
 import java.util.UUID
@@ -126,6 +129,79 @@ class SceneRuntimeLifecycleIntegrationTest {
 
         assertEquals(1, renderer.createCalls)
         runtime.close().toCompletableFuture().also { close -> tickUntil(instance) { close.isDone } }
+    }
+
+    @Test
+    fun `budget queued activation is discarded after last eligible player leaves`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val player =
+            Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
+                it.setInstance(instance, Pos.ZERO).join()
+            }
+        val renderer = ImmediateRenderer(instance)
+        val config = SceneRuntimeConfig(transitionBudgetPerTick = 1, spatialIntervalTicks = 100)
+        val creation =
+            SceneRuntimeFactory.create(
+                    request(instance, renderer, RecordingActions(), automaticPairScene(), config)
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { creation.isDone }
+        val runtime = assertIs<SceneRuntimeCreationResult.Success>(creation.get()).runtime
+        tickUntil(instance) { renderer.contexts.any { it.elementId == LocalId("first") } }
+
+        instance.eventNode().call(PlayerDisconnectEvent(player))
+        repeat(3) { instance.tick(0) }
+
+        assertTrue(renderer.contexts.none { it.elementId == LocalId("target") })
+        runtime.close().toCompletableFuture().also { close -> tickUntil(instance) { close.isDone } }
+    }
+
+    @Test
+    fun `creation continuation rejection completes failure instead of hanging`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val renderer = RecordingRenderer(instance)
+        val runtimeRequest =
+            request(
+                instance,
+                renderer,
+                RecordingActions(),
+                scene = alwaysPropScene(),
+                assetCatalog = propAssets(),
+            )
+        val readiness =
+            SceneReadiness.prepare(
+                SceneReadinessRequest(
+                    runtimeRequest.scene,
+                    runtimeRequest.assets,
+                    runtimeRequest.actions,
+                    runtimeRequest.renderers,
+                    runtimeRequest.effects,
+                    runtimeRequest.actionRegistry,
+                    runtimeRequest.identity,
+                    runtimeRequest.config,
+                )
+            )
+        var rejectContinuations = false
+        val creation =
+            DefaultSceneRuntime.create(
+                    runtimeRequest,
+                    checkNotNull(readiness.capabilities),
+                    schedule = { action ->
+                        if (rejectContinuations)
+                            throw IllegalStateException("owner scheduler rejected continuation")
+                        instance.scheduler().execute(action)
+                    },
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { renderer.createCalls == 1 }
+
+        rejectContinuations = true
+        Thread.startVirtualThread { renderer.completion.complete(renderer.handle) }.join()
+
+        assertTrue(creation.isDone)
+        val failure = assertIs<SceneRuntimeCreationResult.Failure>(creation.get())
+        assertEquals(SceneRuntimeProblemCode.RUNTIME_FAILURE, failure.problems.single().code)
+        assertTrue(renderer.handle.closed)
     }
 
     @Test
@@ -410,10 +486,11 @@ class SceneRuntimeLifecycleIntegrationTest {
         scene: SceneDocument = scene(),
         config: SceneRuntimeConfig = SceneRuntimeConfig(),
         playerPolicy: ScenePlayerPolicy = AllowAllPlayers,
+        assetCatalog: AssetCatalog = assets(),
     ) =
         SceneRuntimeRequest(
             scene = scene,
-            assets = assets(),
+            assets = assetCatalog,
             actions = actionCatalog(),
             identity = SceneRuntimeIdentity(scene.id, "test:map", 1),
             instance = instance,
@@ -573,6 +650,60 @@ class SceneRuntimeLifecycleIntegrationTest {
         )
     }
 
+    private fun automaticPairScene(): SceneDocument {
+        val base = scene()
+        val authored = base.elements.single() as Npc
+        fun automatic(id: String) =
+            Npc(
+                LocalId(id),
+                null,
+                Transform(Vec3(0.0, 0.0, 0.0), EulerRotation(0.0, 0.0, 0.0), Vec3(1.0, 1.0, 1.0)),
+                authored.visible,
+                ActivationPolicy.AUTOMATIC,
+                authored.body,
+                null,
+                authored.labelOffset,
+                LookBehavior.Fixed,
+                null,
+                authored.interactionBounds,
+                null,
+                emptyList(),
+            )
+        return SceneDocument(
+            base.schemaVersion,
+            base.id,
+            base.metadata,
+            base.catalogs,
+            base.groups,
+            listOf(automatic("first"), automatic("target")),
+        )
+    }
+
+    private fun alwaysPropScene(): SceneDocument {
+        val base = scene()
+        return SceneDocument(
+            base.schemaVersion,
+            base.id,
+            base.metadata,
+            base.catalogs,
+            base.groups,
+            listOf(
+                Prop(
+                    LocalId("prop"),
+                    null,
+                    Transform(
+                        Vec3(0.0, 0.0, 0.0),
+                        EulerRotation(0.0, 0.0, 0.0),
+                        Vec3(1.0, 1.0, 1.0),
+                    ),
+                    activation = ActivationPolicy.ALWAYS,
+                    asset = AssetKey("test:prop"),
+                    initialAnimation = null,
+                )
+            ),
+        )
+    }
+
     private fun assets() =
         AssetCatalog(
             CatalogId("test:assets"),
@@ -584,6 +715,23 @@ class SceneRuntimeLifecycleIntegrationTest {
                         AssetKey("test:npc"),
                         AssetKind.NPC_BODY,
                         setOf(LocalId("idle")),
+                        null,
+                        emptyMap(),
+                    )
+            ),
+        )
+
+    private fun propAssets() =
+        AssetCatalog(
+            CatalogId("test:assets"),
+            "1",
+            CatalogVersionRange(CatalogId("test:assets"), "1", "1"),
+            mapOf(
+                AssetKey("test:prop") to
+                    AssetDefinition(
+                        AssetKey("test:prop"),
+                        AssetKind.PROP,
+                        emptySet(),
                         null,
                         emptyMap(),
                     )
@@ -628,13 +776,18 @@ class SceneRuntimeLifecycleIntegrationTest {
     private class ImmediateRenderer(private val instance: Instance) :
         SceneAssetRendererRegistry, SceneAssetRendererFactory {
         val handles = mutableListOf<RecordingHandle>()
+        val contexts = mutableListOf<SceneAssetRenderContext>()
 
         override fun rendererFor(asset: AssetKey, kind: AssetKind) = this
 
         override fun create(
             context: SceneAssetRenderContext
-        ): CompletionStage<RenderedAssetHandle> =
-            CompletableFuture.completedFuture(RecordingHandle(instance).also { handles += it })
+        ): CompletionStage<RenderedAssetHandle> {
+            contexts += context
+            return CompletableFuture.completedFuture(
+                RecordingHandle(instance).also { handles += it }
+            )
+        }
     }
 
     private class ViewerFailingRenderer(private val instance: Instance) :

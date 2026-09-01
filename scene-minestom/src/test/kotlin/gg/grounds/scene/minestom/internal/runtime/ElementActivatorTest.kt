@@ -13,6 +13,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import net.kyori.adventure.text.Component
 import net.minestom.server.MinecraftServer
@@ -331,10 +332,33 @@ class ElementActivatorTest {
         assertTrue(activation.toCompletableFuture().isDone)
     }
 
+    @Test
+    fun `scheduler rejection after handle delivery closes the handle and completes activation`() {
+        val factory = RecordingFactory()
+        val schedulerFailure = IllegalStateException("owner scheduler rejected delivery")
+        val activation =
+            activator(
+                    SceneAssetRendererRegistry { _, _ -> factory },
+                    schedule = { throw schedulerFailure },
+                )
+                .activate(state(prop()))
+
+        Thread.startVirtualThread { factory.complete(0) }.join()
+
+        val failure = assertFailsWith<ExecutionException> { activation.await() }.cause
+        assertSame(schedulerFailure, failure)
+        assertEquals(1, factory.handles.single().closeCount)
+        assertTrue(activation.toCompletableFuture().isDone)
+    }
+
     private fun activator(factory: RecordingFactory): ElementActivator =
         activator(SceneAssetRendererRegistry { _, _ -> factory })
 
-    private fun activator(renderers: SceneAssetRendererRegistry, instance: Instance = instance()) =
+    private fun activator(
+        renderers: SceneAssetRendererRegistry,
+        instance: Instance = instance(),
+        schedule: (Runnable) -> Unit = Runnable::run,
+    ) =
         ElementActivator(
             instance,
             buildMap {
@@ -347,6 +371,7 @@ class ElementActivatorTest {
                 }
             },
             TestClock(5_000_000L),
+            schedule,
         )
 
     private fun instance(): Instance {
@@ -457,6 +482,7 @@ class ElementActivatorTest {
 
     private class RecordingHandle(val asset: String) : RenderedAssetHandle {
         var closed = false
+        var closeCount = 0
         var closeFailure: Throwable? = null
         val startedAnimations = mutableListOf<Pair<LocalId, Long>>()
 
@@ -479,6 +505,7 @@ class ElementActivatorTest {
 
         override fun close() {
             closed = true
+            closeCount++
             closeFailure?.let { throw it }
         }
     }

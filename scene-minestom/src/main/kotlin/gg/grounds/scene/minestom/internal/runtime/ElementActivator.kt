@@ -95,14 +95,7 @@ internal class ElementActivator(
                     activation.failed(error)
                     return@forEachIndexed
                 }
-            observe(stage, activation) { handle, error ->
-                if (error != null) activation.failed(error.unwrap())
-                else
-                    activation.handleCompleted(
-                        index,
-                        requireNotNull(handle) { "Renderer stage completed with a null handle." },
-                    )
-            }
+            observeRenderer(stage, index, activation)
         }
         if (requested.isEmpty() && npcElement?.visible != true) activation.completed()
         return activation
@@ -121,7 +114,38 @@ internal class ElementActivator(
         callback: (T?, Throwable?) -> Unit,
     ) {
         try {
-            stage.whenComplete { value, error -> activation.schedule { callback(value, error) } }
+            stage.whenComplete { value, error ->
+                try {
+                    activation.schedule { callback(value, error) }
+                } catch (scheduleError: Throwable) {
+                    activation.failed(error?.unwrap().withSuppressed(scheduleError))
+                }
+            }
+        } catch (error: Throwable) {
+            activation.failed(error)
+        }
+    }
+
+    private fun observeRenderer(
+        stage: CompletionStage<RenderedAssetHandle>,
+        index: Int,
+        activation: Activation,
+    ) {
+        try {
+            stage.whenComplete { handle, error ->
+                try {
+                    val delivery = activation.recordDelivery(index, handle, error?.unwrap())
+                    if (delivery.accepted) {
+                        try {
+                            activation.schedule { activation.finishDelivery(delivery) }
+                        } catch (scheduleError: Throwable) {
+                            activation.failDelivery(delivery, scheduleError)
+                        }
+                    }
+                } catch (callbackError: Throwable) {
+                    activation.failed(callbackError)
+                }
+            }
         } catch (error: Throwable) {
             activation.failed(error)
         }
@@ -220,6 +244,8 @@ internal class ElementActivator(
 
     private data class RenderRequest(val kind: AssetKind, val context: SceneAssetRenderContext)
 
+    private data class Delivery(val failure: Throwable?, val accepted: Boolean)
+
     private inner class Activation(
         private val state: LogicalElementState,
         private val generation: Long,
@@ -237,14 +263,37 @@ internal class ElementActivator(
         private var terminalFailure: Throwable? = null
         private var published: ActiveElement? = null
 
-        fun handleCompleted(index: Int, handle: RenderedAssetHandle) {
+        fun recordDelivery(index: Int, handle: RenderedAssetHandle?, error: Throwable?): Delivery =
             synchronized(this) {
                 if (terminal) {
-                    recordLateCleanup(closeOwnedResources(null, listOf(handle)))
+                    handle?.let { recordLateCleanup(closeOwnedResources(null, listOf(it))) }
+                    return@synchronized Delivery(error, false)
+                }
+                if (handle != null) handles[index] = handle
+                Delivery(
+                    error
+                        ?: if (handle == null)
+                            IllegalStateException("Renderer stage completed with a null handle.")
+                        else null,
+                    true,
+                )
+            }
+
+        fun finishDelivery(delivery: Delivery) {
+            synchronized(this) {
+                if (!delivery.accepted || terminal) return
+                val failure = delivery.failure
+                if (failure != null) failLocked(failure) else resourceCompletedLocked()
+            }
+        }
+
+        fun failDelivery(delivery: Delivery, scheduleError: Throwable) {
+            synchronized(this) {
+                if (!delivery.accepted || terminal) {
+                    recordLateCleanup(scheduleError)
                     return
                 }
-                handles[index] = handle
-                resourceCompletedLocked()
+                failLocked(delivery.failure.withSuppressed(scheduleError))
             }
         }
 
@@ -267,27 +316,21 @@ internal class ElementActivator(
         fun completed() = synchronized(this) { if (!terminal) publishOrClose() }
 
         fun schedule(action: () -> Unit) {
-            try {
-                schedule(
-                    Runnable {
-                        try {
-                            action()
-                        } catch (error: Throwable) {
-                            failed(error)
-                        }
+            schedule(
+                Runnable {
+                    try {
+                        action()
+                    } catch (error: Throwable) {
+                        failed(error)
                     }
-                )
-            } catch (error: Throwable) {
-                failed(error)
-            }
+                }
+            )
         }
 
         fun failed(error: Throwable) {
             synchronized(this) {
                 if (terminal) return
-                terminal = true
-                terminalFailure = closeOwnedResources(npc, handles.filterNotNull(), error) ?: error
-                future.completeExceptionally(terminalFailure)
+                failLocked(error)
             }
         }
 
@@ -317,6 +360,12 @@ internal class ElementActivator(
         private fun resourceCompletedLocked() {
             pending--
             if (pending == 0) publishOrClose()
+        }
+
+        private fun failLocked(error: Throwable) {
+            terminal = true
+            terminalFailure = closeOwnedResources(npc, handles.filterNotNull(), error) ?: error
+            future.completeExceptionally(terminalFailure)
         }
 
         private fun publishOrClose() {
@@ -366,6 +415,12 @@ internal class ElementActivator(
             terminalFailure?.let { failure -> if (error !== failure) failure.addSuppressed(error) }
         }
     }
+}
+
+private fun Throwable?.withSuppressed(secondary: Throwable): Throwable {
+    val primary = this ?: return secondary
+    if (secondary !== primary) primary.addSuppressed(secondary)
+    return primary
 }
 
 private fun Throwable.unwrap(): Throwable = (this as? CompletionException)?.cause ?: this
