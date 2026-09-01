@@ -2,6 +2,8 @@ package gg.grounds.scene.minestom.internal.runtime
 
 import gg.grounds.scene.format.*
 import gg.grounds.scene.minestom.*
+import gg.grounds.scene.minestom.internal.RendererCapabilityKey
+import java.lang.reflect.Proxy
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
@@ -85,6 +87,20 @@ class ElementActivatorTest {
             listOf("test:a", "test:b"),
             activation.await().handles.map { (it as RecordingHandle).asset },
         )
+    }
+
+    @Test
+    fun `reactivation reapplies part animation only to its resolved handle`() {
+        val factory = RecordingFactory()
+        val state = state(composite("a", "b"))
+        state.setAnimation(LocalId("b"), LogicalAnimationState(LocalId("wave"), 2_000_000L))
+
+        val activation = activator(factory).activate(state)
+        factory.completeAll()
+        activation.await()
+
+        assertTrue(factory.handles[0].startedAnimations.isEmpty())
+        assertEquals(listOf(LocalId("wave") to 3L), factory.handles[1].startedAnimations)
     }
 
     @Test
@@ -253,11 +269,85 @@ class ElementActivatorTest {
         assertTrueEventually { factory.handles.single().closed }
     }
 
+    @Test
+    fun `invisible prop and npc activate logically without renderer or platform resources`() {
+        val factory = RecordingFactory()
+        val activator = activator(factory)
+
+        val prop = activator.activate(state(prop().copy(visible = false))).await()
+        val authoredNpc = npc()
+        val invisibleNpc =
+            Npc(
+                authoredNpc.id,
+                authoredNpc.group,
+                authoredNpc.transform,
+                false,
+                authoredNpc.activation,
+                authoredNpc.body,
+                authoredNpc.label,
+                authoredNpc.labelOffset,
+                authoredNpc.look,
+                authoredNpc.initialAnimation,
+                authoredNpc.interactionBounds,
+                authoredNpc.proximity,
+                authoredNpc.bindings,
+            )
+        val npc = activator.activate(state(invisibleNpc)).await()
+
+        assertTrue(prop.handles.isEmpty())
+        assertNull(prop.npcEntities)
+        assertTrue(npc.handles.isEmpty())
+        assertNull(npc.npcEntities)
+        assertTrue(factory.contexts.isEmpty())
+    }
+
+    @Test
+    fun `callback registration failure completes activation and closes earlier composite handle`() {
+        val earlier = RecordingFactory().apply { completeImmediately = true }
+        val throwingStage = throwingRegistrationStage()
+        val registry = SceneAssetRendererRegistry { asset, _ ->
+            when (asset.value) {
+                "test:a" -> earlier
+                else -> SceneAssetRendererFactory { throwingStage }
+            }
+        }
+
+        val activation = activator(registry).activate(state(composite("a", "b")))
+
+        assertFailsWith<Exception> { activation.await() }
+        assertTrue(earlier.handles.single().closed)
+    }
+
+    @Test
+    fun `null renderer callback cannot strand activation ownership`() {
+        val future = CompletableFuture<RenderedAssetHandle>()
+        val activation =
+            activator(SceneAssetRendererRegistry { _, _ -> SceneAssetRendererFactory { future } })
+                .activate(state(prop()))
+
+        future.complete(null)
+
+        assertFailsWith<Exception> { activation.await() }
+        assertTrue(activation.toCompletableFuture().isDone)
+    }
+
     private fun activator(factory: RecordingFactory): ElementActivator =
         activator(SceneAssetRendererRegistry { _, _ -> factory })
 
     private fun activator(renderers: SceneAssetRendererRegistry, instance: Instance = instance()) =
-        ElementActivator(instance, renderers, TestClock(5_000_000L))
+        ElementActivator(
+            instance,
+            buildMap {
+                listOf("prop", "npc", "a", "b", "c", "part").forEach { id ->
+                    val asset = AssetKey("test:$id")
+                    val kind = if (id == "npc") AssetKind.NPC_BODY else AssetKind.PROP
+                    renderers.rendererFor(asset, kind)?.let {
+                        put(RendererCapabilityKey(asset, kind), it)
+                    }
+                }
+            },
+            TestClock(5_000_000L),
+        )
 
     private fun instance(): Instance {
         MinecraftServer.init()
@@ -352,6 +442,18 @@ class ElementActivatorTest {
             futures[index].completeExceptionally(IllegalStateException("renderer failed"))
         }
     }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun throwingRegistrationStage(): CompletionStage<RenderedAssetHandle> =
+        Proxy.newProxyInstance(javaClass.classLoader, arrayOf(CompletionStage::class.java)) {
+            _,
+            method,
+            _ ->
+            if (method.name == "whenComplete") {
+                throw IllegalStateException("registration failed")
+            }
+            throw UnsupportedOperationException(method.name)
+        } as CompletionStage<RenderedAssetHandle>
 
     private class RecordingHandle(val asset: String) : RenderedAssetHandle {
         var closed = false

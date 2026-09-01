@@ -4,12 +4,45 @@ import gg.grounds.scene.format.Npc
 import gg.grounds.scene.format.Vec3
 import gg.grounds.scene.minestom.SceneRenderTransform
 import gg.grounds.scene.minestom.internal.geometry.affine
+import gg.grounds.scene.minestom.internal.runtime.ActiveElement
 import kotlin.math.max
 import kotlin.math.min
 
 internal class BoundsRaycaster {
     fun rayDistance(npc: Npc, eye: Vec3, direction: Vec3, maximumDistance: Double): Double? {
-        val inverse = SceneRenderTransform(npc.transform, null).affine().inverse()
+        return rayDistance(
+            npc,
+            SceneRenderTransform(npc.transform, null),
+            eye,
+            direction,
+            maximumDistance,
+        )
+    }
+
+    fun rayDistance(
+        active: ActiveElement,
+        eye: Vec3,
+        direction: Vec3,
+        maximumDistance: Double,
+    ): Double? {
+        val npc = active.npc ?: return null
+        return rayDistance(
+            npc,
+            active.transformOr(SceneRenderTransform(npc.transform, null)),
+            eye,
+            direction,
+            maximumDistance,
+        )
+    }
+
+    private fun rayDistance(
+        npc: Npc,
+        transform: SceneRenderTransform,
+        eye: Vec3,
+        direction: Vec3,
+        maximumDistance: Double,
+    ): Double? {
+        val inverse = transform.affine().inverse()
         val localEye = inverse.transform(eye)
         val localDirection = inverse.transformVector(direction)
         val half = npc.interactionBounds.size.let { Vec3(it.x / 2.0, it.y / 2.0, it.z / 2.0) }

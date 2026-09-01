@@ -17,4 +17,7 @@ data class SceneRuntimeProblem(
     val path: String,
     val elementId: LocalId?,
     val message: String,
-)
+) {
+    val elementIdValue: String?
+        get() = elementId?.value
+}

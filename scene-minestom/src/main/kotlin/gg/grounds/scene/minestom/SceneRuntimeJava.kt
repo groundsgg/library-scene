@@ -53,6 +53,21 @@ abstract class JavaSceneActionRegistry : SceneActionRegistry {
     abstract fun handlerFor(key: String): SceneActionHandler?
 }
 
+/** Java-friendly renderer handle bridge for Scene format value-class identifiers. */
+abstract class JavaRenderedAssetHandle : RenderedAssetHandle {
+    final override fun startAnimation(
+        animation: gg.grounds.scene.format.LocalId,
+        elapsedMillis: Long,
+    ) = startAnimation(animation.value, elapsedMillis)
+
+    final override fun stopAnimation(animation: gg.grounds.scene.format.LocalId?) =
+        stopAnimation(animation?.value)
+
+    abstract fun startAnimation(animation: String, elapsedMillis: Long)
+
+    abstract fun stopAnimation(animation: String?)
+}
+
 object SceneRuntimeJava {
     @JvmStatic
     fun identity(sceneId: String, mapId: String, mapVersion: Long): SceneRuntimeIdentity =

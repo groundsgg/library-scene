@@ -4,6 +4,8 @@ import gg.grounds.scene.format.ActivationPolicy
 import gg.grounds.scene.format.LocalId
 import gg.grounds.scene.minestom.SceneClock
 import gg.grounds.scene.minestom.SceneRuntimeConfig
+import gg.grounds.scene.minestom.internal.elapsedAtLeast
+import gg.grounds.scene.minestom.internal.millisToNanosSaturated
 import net.minestom.server.coordinate.Point
 
 internal enum class ActivationTransitionKind {
@@ -18,64 +20,106 @@ internal class ActivationController(
     private val config: SceneRuntimeConfig,
     private val clock: SceneClock,
 ) {
-    private enum class RuntimeState {
-        INACTIVE,
-        ACTIVE,
-        FAILED,
-    }
-
-    private val states =
-        index.elements().associate { it.id to RuntimeState.INACTIVE }.toMutableMap()
+    private val elementsById = index.elements().associateBy { it.id }
+    private val always =
+        index
+            .elements()
+            .filter { it.policy == ActivationPolicy.ALWAYS }
+            .mapTo(linkedSetOf()) { it.id }
+    private val inactive =
+        index
+            .elements()
+            .filter { it.policy == ActivationPolicy.AUTOMATIC }
+            .mapTo(linkedSetOf()) { it.id }
+    private val active = linkedSetOf<LocalId>()
+    private val activating = linkedSetOf<LocalId>()
+    private val failed = linkedSetOf<LocalId>()
     private val pending = mutableSetOf<ActivationTransition>()
     private val outsideSince = mutableMapOf<LocalId, Long>()
     private val queued = mutableListOf<ActivationTransition>()
+    private var lastVisited = 0
+    private val orderRank =
+        index.elements().mapIndexed { rank, element -> element.id to rank }.toMap()
+
+    init {
+        always.forEach { request(it, ActivationTransitionKind.ACTIVATE) }
+    }
 
     fun evaluate(eligiblePlayerPositions: List<Point>): List<ActivationTransition> {
         reevaluate(eligiblePlayerPositions)
         return drainTransitions()
     }
 
-    fun reevaluate(eligiblePlayerPositions: List<Point>) {
-        val nearActivation =
-            eligiblePlayerPositions
-                .flatMap { index.candidates(it, config.activationDistance) }
-                .toSet()
+    fun reevaluate(eligiblePlayerPositions: List<Point>): List<LocalId> {
+        val visited = linkedSetOf<LocalId>()
+        val nearActivation = candidates(eligiblePlayerPositions, config.activationDistance, visited)
         val nearDeactivation =
-            eligiblePlayerPositions
-                .flatMap { index.candidates(it, config.deactivationDistance) }
-                .toSet()
+            candidates(eligiblePlayerPositions, config.deactivationDistance, visited)
+        lastVisited = (visited + active + activating).size
         val now = clock.nanoTime()
-        index.elements().forEach { element ->
-            when (states.getValue(element.id)) {
-                RuntimeState.FAILED -> Unit
-                RuntimeState.INACTIVE ->
-                    if (element.policy == ActivationPolicy.ALWAYS || element.id in nearActivation)
-                        request(element.id, ActivationTransitionKind.ACTIVATE)
-                RuntimeState.ACTIVE -> evaluateActive(element, nearDeactivation, now)
-            }
+
+        pending
+            .filter { it.kind == ActivationTransitionKind.ACTIVATE }
+            .map { it.elementId }
+            .filter { it !in always && it !in nearActivation }
+            .forEach { cancel(it, ActivationTransitionKind.ACTIVATE) }
+        nearActivation
+            .asSequence()
+            .filter { it in inactive && it !in failed }
+            .sortedWith(elementOrder)
+            .forEach { request(it, ActivationTransitionKind.ACTIVATE) }
+        active.toList().forEach { elementId ->
+            evaluateActive(elementsById.getValue(elementId), nearDeactivation, now)
         }
+        val invalidated =
+            activating
+                .filter { it !in always && it !in nearActivation }
+                .sortedWith(elementOrder)
+                .also { ids ->
+                    ids.forEach { elementId ->
+                        activating.remove(elementId)
+                        inactive.add(elementId)
+                    }
+                }
         queued.sortWith(transitionOrder)
+        return invalidated
     }
 
     fun drainTransitions(): List<ActivationTransition> =
         queued.take(config.transitionBudgetPerTick).also { queued.subList(0, it.size).clear() }
 
+    fun markActivating(elementId: LocalId) {
+        if (elementId in failed) return
+        inactive.remove(elementId)
+        activating.add(elementId)
+        cancel(elementId, ActivationTransitionKind.ACTIVATE)
+    }
+
     fun markActive(elementId: LocalId) {
-        states[elementId] = RuntimeState.ACTIVE
+        inactive.remove(elementId)
+        activating.remove(elementId)
+        if (elementId !in always) active.add(elementId)
         clearPending(elementId)
     }
 
     fun markInactive(elementId: LocalId) {
-        states[elementId] = RuntimeState.INACTIVE
+        active.remove(elementId)
+        activating.remove(elementId)
+        if (elementId !in always && elementId !in failed) inactive.add(elementId)
         outsideSince.remove(elementId)
         clearPending(elementId)
     }
 
     fun markFailed(elementId: LocalId) {
-        states[elementId] = RuntimeState.FAILED
+        inactive.remove(elementId)
+        active.remove(elementId)
+        activating.remove(elementId)
+        failed.add(elementId)
         outsideSince.remove(elementId)
         clearPending(elementId)
     }
+
+    fun visitedElementCount(): Int = lastVisited
 
     private fun evaluateActive(element: IndexedElement, nearDeactivation: Set<LocalId>, now: Long) {
         if (element.policy == ActivationPolicy.ALWAYS || element.id in nearDeactivation) {
@@ -93,12 +137,7 @@ internal class ActivationController(
         if (pending.add(transition)) queued += transition
     }
 
-    private fun graceNanos(): Long =
-        if (config.deactivationGraceMillis > Long.MAX_VALUE / 1_000_000L) Long.MAX_VALUE
-        else config.deactivationGraceMillis * 1_000_000L
-
-    private fun elapsedAtLeast(now: Long, since: Long, duration: Long): Boolean =
-        java.lang.Long.compareUnsigned(now - since, duration) >= 0
+    private fun graceNanos(): Long = millisToNanosSaturated(config.deactivationGraceMillis)
 
     private fun clearPending(elementId: LocalId) {
         pending.removeAll { it.elementId == elementId }
@@ -112,10 +151,18 @@ internal class ActivationController(
     }
 
     private val transitionOrder =
-        compareBy<ActivationTransition>(
-            { index.cellKey(it.elementId).x },
-            { index.cellKey(it.elementId).z },
-            { it.elementId.value },
-            { it.kind },
-        )
+        compareBy<ActivationTransition>({ orderRank.getValue(it.elementId) }, { it.kind })
+
+    private val elementOrder = compareBy<LocalId> { orderRank.getValue(it) }
+
+    private fun candidates(
+        positions: List<Point>,
+        radius: Double,
+        visited: MutableSet<LocalId>,
+    ): Set<LocalId> =
+        positions
+            .flatMap { point ->
+                index.candidates(point, radius).also { visited += index.visitedIds() }
+            }
+            .toSet()
 }

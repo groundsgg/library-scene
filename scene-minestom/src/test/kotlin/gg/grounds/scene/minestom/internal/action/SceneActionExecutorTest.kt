@@ -52,6 +52,9 @@ class SceneActionExecutorTest {
                                 composite.generation,
                                 listOf(firstPart, secondPart),
                                 null,
+                                null,
+                                emptyList(),
+                                listOf(LocalId("a"), LocalId("b")),
                             ),
                     ),
                 )
@@ -69,12 +72,31 @@ class SceneActionExecutorTest {
                 )
 
         assertEquals(ChainOutcome.SUCCEEDED, outcome.await())
-        assertEquals(LogicalAnimationState(LocalId("idle"), 7L), inactive.animation)
+        assertEquals(LogicalAnimationState(LocalId("idle"), 11L), inactive.animation)
         assertEquals(LogicalAnimationState(null, null), active.animation)
         assertEquals(listOf(LocalId("run") to 0L), handle.started)
         assertEquals(listOf<LocalId?>(LocalId("run")), handle.stopped)
         assertTrue(firstPart.started.isEmpty())
         assertEquals(listOf(LocalId("part") to 0L), secondPart.started)
+        assertEquals(
+            LogicalAnimationState(LocalId("part"), 11L),
+            composite.animationFor(LocalId("b")),
+        )
+    }
+
+    @Test
+    fun `animation start timestamp comes from action execution clock`() {
+        val instance = instance()
+        val player = player(instance)
+        val element = state(prop("prop"))
+        val clock = ManualClock(123L)
+
+        val outcome =
+            executor(instance, player, mapOf(element.element.id to element), clock = clock)
+                .execute(chain(player, StartAnimationAction(target("prop"), LocalId("idle"))))
+
+        assertEquals(ChainOutcome.SUCCEEDED, outcome.await())
+        assertEquals(LogicalAnimationState(LocalId("idle"), 123L), element.animation)
     }
 
     @Test
@@ -112,6 +134,111 @@ class SceneActionExecutorTest {
             viewers.visualState(ViewerElementKey(second.uuid, LocalId("prop"))),
         )
         assertEquals(listOf(first.uuid, first.uuid), handle.viewerUpdates.map { it.first })
+    }
+
+    @Test
+    fun `part viewer action persists and applies only to the resolved part handle`() {
+        val instance = instance()
+        val player = player(instance)
+        val element = state(composite("composite"))
+        val firstPart = RecordingHandle()
+        val secondPart = RecordingHandle()
+        val viewers = ViewerStateStore()
+
+        val outcome =
+            executor(
+                    instance,
+                    player,
+                    mapOf(element.element.id to element),
+                    mapOf(
+                        element.element.id to
+                            ActiveElement(
+                                element.element.id,
+                                element.generation,
+                                listOf(firstPart, secondPart),
+                                null,
+                                null,
+                                emptyList(),
+                                listOf(LocalId("a"), LocalId("b")),
+                            )
+                    ),
+                    viewers = viewers,
+                )
+                .execute(
+                    chain(
+                        player,
+                        SetViewerScaleAction(
+                            ElementTarget(element.element.id, LocalId("b")),
+                            2.0,
+                            0,
+                        ),
+                    )
+                )
+
+        assertEquals(ChainOutcome.SUCCEEDED, outcome.await())
+        assertTrue(firstPart.viewerUpdates.isEmpty())
+        assertEquals(2.0, secondPart.viewerUpdates.single().second.scaleMultiplier)
+        assertEquals(
+            2.0,
+            viewers
+                .visualState(ViewerElementKey(player.uuid, element.element.id, LocalId("b")))
+                .scaleMultiplier,
+        )
+        assertEquals(
+            1.0,
+            viewers.visualState(ViewerElementKey(player.uuid, element.element.id)).scaleMultiplier,
+        )
+    }
+
+    @Test
+    fun `nonzero viewer transitions expose start duration target and clock driven current state`() {
+        val instance = instance()
+        val player = player(instance)
+        val element = state(prop("prop"))
+        val clock = ManualClock(1_000_000_000L)
+        val viewers = ViewerStateStore(clock)
+
+        executor(
+                instance,
+                player,
+                mapOf(element.element.id to element),
+                viewers = viewers,
+                clock = clock,
+            )
+            .execute(
+                chain(
+                    player,
+                    SetViewerScaleAction(target("prop"), 3.0, 1_000),
+                    SetViewerHighlightAction(target("prop"), true, 1_000),
+                )
+            )
+            .await()
+
+        val key = ViewerElementKey(player.uuid, element.element.id)
+        val started = viewers.visualState(key)
+        val scaleTransition = assertNotNull(started.scaleTransition)
+        val highlightTransition = assertNotNull(started.highlightTransition)
+        assertEquals(1.0, started.scaleMultiplier)
+        assertFalse(started.highlighted)
+        assertEquals(1_000_000_000L, scaleTransition.startedNanos)
+        assertEquals(1_000_000_000L, scaleTransition.durationNanos)
+        assertEquals(3.0, scaleTransition.target)
+        assertEquals(1.0, scaleTransition.current)
+        assertEquals(true, highlightTransition.target)
+        assertEquals(false, highlightTransition.current)
+
+        clock.advanceMillis(500)
+        val halfway = viewers.visualState(key)
+        assertEquals(2.0, halfway.scaleMultiplier)
+        assertFalse(halfway.highlighted)
+        assertEquals(2.0, halfway.scaleTransition!!.current)
+
+        clock.advanceMillis(500)
+        val completed = viewers.visualState(key)
+        assertEquals(3.0, completed.scaleMultiplier)
+        assertTrue(completed.highlighted)
+        assertEquals(3.0, completed.scaleTransition!!.current)
+        assertEquals(true, completed.highlightTransition!!.current)
     }
 
     @Test
@@ -161,6 +288,65 @@ class SceneActionExecutorTest {
             ),
             player.packets.takeLast(5).map { it::class },
         )
+    }
+
+    @Test
+    fun `particle target uses active generation runtime rotation for composite part geometry`() {
+        val instance = instance()
+        val player = player(instance)
+        val authored = composite("composite")
+        val element =
+            state(
+                CompositeProp(
+                    authored.id,
+                    authored.group,
+                    authored.transform,
+                    authored.visible,
+                    authored.activation,
+                    authored.parts.map { part ->
+                        if (part.id == LocalId("b")) {
+                            part.copy(
+                                transform = part.transform.copy(position = Vec3(2.0, 0.0, 0.0))
+                            )
+                        } else {
+                            part
+                        }
+                    },
+                )
+            )
+        val active = ActiveElement(element.element.id, element.generation, emptyList(), null)
+        active.updateRuntimeTransform(
+            SceneRenderTransform(
+                element.element.transform.copy(rotation = EulerRotation(-90.0, 0.0, 0.0)),
+                null,
+            )
+        )
+        val effects = RecordingEffects()
+
+        val outcome =
+            executor(
+                    instance,
+                    player,
+                    mapOf(element.element.id to element),
+                    mapOf(element.element.id to active),
+                    effects = effects,
+                )
+                .execute(
+                    chain(
+                        player,
+                        EmitParticleAction(
+                            ElementTarget(element.element.id, LocalId("b")),
+                            AssetKey("test:particle"),
+                            1,
+                            Vec3(0.0, 0.0, 0.0),
+                            0.0,
+                        ),
+                    )
+                )
+
+        assertEquals(ChainOutcome.SUCCEEDED, outcome.await())
+        assertEquals(0.0, effects.particles.single().point.x(), 0.000_001)
+        assertEquals(2.0, effects.particles.single().point.z(), 0.000_001)
     }
 
     @Test
@@ -309,6 +495,7 @@ class SceneActionExecutorTest {
                     },
                 registerCompletion = { _, _ -> throw IllegalStateException("registration") },
             )
+        var currentChecks = 0
         val schedulerFailure =
             executor(
                 instance,
@@ -321,6 +508,10 @@ class SceneActionExecutorTest {
                         }
                     },
                 schedule = { throw IllegalStateException("scheduler") },
+                isCurrent = {
+                    currentChecks++
+                    true
+                },
             )
 
         assertEquals(
@@ -335,6 +526,72 @@ class SceneActionExecutorTest {
             ChainOutcome.FAILED,
             schedulerFailure.execute(chain(player, application())).await(),
         )
+        assertEquals(2, currentChecks)
+    }
+
+    @Test
+    fun `effect and application failures report safe diagnostics and causes`() {
+        val instance = instance()
+        val player = player(instance)
+        val diagnostics = mutableListOf<SceneActionDiagnostic>()
+        val effectCause = IllegalStateException("effect cause")
+        val handlerCause = IllegalArgumentException("handler cause")
+        val exceptionalCause = UnsupportedOperationException("stage cause")
+        val throwingEffects =
+            object : RecordingEffects() {
+                override fun playSound(
+                    player: Player,
+                    sound: AssetKey,
+                    volume: Double,
+                    pitch: Double,
+                ) {
+                    throw effectCause
+                }
+            }
+        val results =
+            ArrayDeque<CompletionStage<SceneActionResult>>().apply {
+                add(
+                    CompletableFuture.completedFuture(
+                        SceneActionResult.Failure("safe handler diagnostic", handlerCause)
+                    )
+                )
+                add(
+                    CompletableFuture<SceneActionResult>().also {
+                        it.completeExceptionally(exceptionalCause)
+                    }
+                )
+            }
+        val actions = SceneActionRegistry { SceneActionHandler { results.removeFirst() } }
+        val executor =
+            executor(
+                instance,
+                player,
+                emptyMap(),
+                effects = throwingEffects,
+                actions = actions,
+                reportDiagnostic = diagnostics::add,
+            )
+
+        assertEquals(
+            ChainOutcome.FAILED,
+            executor
+                .execute(chain(player, PlaySoundAction(AssetKey("test:sound"), 1.0, 1.0)))
+                .await(),
+        )
+        assertEquals(
+            ChainOutcome.FAILED,
+            executor.execute(chain(player, application())).also { tick(instance) }.await(),
+        )
+        assertEquals(
+            ChainOutcome.FAILED,
+            executor.execute(chain(player, application())).also { tick(instance) }.await(),
+        )
+
+        assertEquals(3, diagnostics.size)
+        assertSame(effectCause, diagnostics[0].cause)
+        assertEquals("safe handler diagnostic", diagnostics[1].diagnostic)
+        assertSame(handlerCause, diagnostics[1].cause)
+        assertSame(exceptionalCause, diagnostics[2].cause)
     }
 
     private fun executor(
@@ -354,6 +611,8 @@ class SceneActionExecutorTest {
             { stage, callback ->
                 stage.whenComplete(callback)
             },
+        clock: SceneClock = ManualClock(11L),
+        reportDiagnostic: (SceneActionDiagnostic) -> Unit = {},
     ) =
         SceneActionExecutor(
             instance,
@@ -362,10 +621,14 @@ class SceneActionExecutorTest {
             active,
             viewers,
             effects,
-            actions,
+            actions.handlerFor(ActionKey("test:action"))?.let {
+                mapOf(ActionKey("test:action") to it)
+            } ?: emptyMap(),
             isCurrent,
             schedule,
             registerCompletion,
+            clock,
+            reportDiagnostic,
         )
 
     private fun chain(player: Player, vararg actions: SceneAction) =
@@ -505,7 +768,7 @@ class SceneActionExecutorTest {
         override fun close() = Unit
     }
 
-    private class RecordingEffects : SceneEffectSink {
+    private open class RecordingEffects : SceneEffectSink {
         val sounds = mutableListOf<UUID>()
 
         data class Particle(val point: net.minestom.server.coordinate.Point)
@@ -527,6 +790,14 @@ class SceneActionExecutorTest {
             speed: Double,
         ) {
             particles += Particle(point)
+        }
+    }
+
+    private class ManualClock(private var now: Long) : SceneClock {
+        override fun nanoTime(): Long = now
+
+        fun advanceMillis(millis: Long) {
+            now += millis * 1_000_000L
         }
     }
 }

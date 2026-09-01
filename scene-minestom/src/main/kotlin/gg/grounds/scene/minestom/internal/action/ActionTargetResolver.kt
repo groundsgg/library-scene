@@ -9,6 +9,7 @@ import gg.grounds.scene.minestom.internal.runtime.LogicalElementState
 
 internal data class ResolvedActionTarget(
     val state: LogicalElementState,
+    val partId: LocalId?,
     val transform: SceneRenderTransform,
     val activeHandles: List<gg.grounds.scene.minestom.RenderedAssetHandle>,
 )
@@ -21,7 +22,7 @@ internal class ActionTargetResolver(
         val state = elements[target.element] ?: return null
         val element = state.element
         val part = target.part
-        val transform =
+        val authoredTransform =
             when {
                 part == null -> SceneRenderTransform(element.transform, null)
                 element !is CompositeProp -> return null
@@ -32,17 +33,15 @@ internal class ActionTargetResolver(
                         ?: return null
             }
         val active = activeElements[target.element]?.takeIf { it.generation == state.generation }
+        val currentRoot =
+            active?.transformOr(SceneRenderTransform(element.transform, null))?.root
+                ?: element.transform
+        val transform = SceneRenderTransform(currentRoot, authoredTransform.local)
         val handles =
             when {
                 active == null -> emptyList()
-                part == null -> active.handles
-                element !is CompositeProp -> emptyList()
-                else -> {
-                    val partIndex =
-                        element.parts.sortedBy { it.id.value }.indexOfFirst { it.id == part }
-                    active.handles.getOrNull(partIndex)?.let(::listOf).orEmpty()
-                }
+                else -> active.handlesFor(part)
             }
-        return ResolvedActionTarget(state, transform, handles)
+        return ResolvedActionTarget(state, part, transform, handles)
     }
 }

@@ -25,6 +25,17 @@ internal enum class ChainOutcome {
     STALE,
 }
 
+internal data class SceneActionDiagnostic(
+    val playerId: java.util.UUID,
+    val elementId: LocalId,
+    val trigger: SceneTrigger,
+    val bindingIndex: Int,
+    val outcome: ChainOutcome,
+    val code: String,
+    val diagnostic: String,
+    val cause: Throwable? = null,
+)
+
 internal class SceneActionExecutor(
     private val instance: Instance,
     private val identity: SceneRuntimeIdentity,
@@ -32,7 +43,7 @@ internal class SceneActionExecutor(
     private val activeElements: Map<LocalId, ActiveElement> = emptyMap(),
     private val viewers: ViewerStateStore,
     private val effects: SceneEffectSink,
-    private val actions: SceneActionRegistry,
+    private val actions: Map<ActionKey, SceneActionHandler>,
     private val isCurrent: (PendingActionChain) -> Boolean,
     private val schedule: (Runnable) -> Unit = { instance.scheduler().execute(it) },
     private val registerCompletion:
@@ -40,6 +51,8 @@ internal class SceneActionExecutor(
         { stage, callback ->
             stage.whenComplete(callback)
         },
+    private val clock: SceneClock,
+    private val reportDiagnostic: (SceneActionDiagnostic) -> Unit = {},
 ) {
     private val targets = ActionTargetResolver(elements, activeElements)
 
@@ -78,7 +91,18 @@ internal class SceneActionExecutor(
         if (action is ApplicationAction) executeApplication(chain, actionIndex, action, completion)
         else {
             val outcome =
-                runCatching { executeSafe(chain, action) }.getOrElse { ChainOutcome.FAILED }
+                try {
+                    executeSafe(chain, action)
+                } catch (error: Throwable) {
+                    report(
+                        chain,
+                        ChainOutcome.FAILED,
+                        "SAFE_ACTION_FAILED",
+                        "Scene action failed.",
+                        error,
+                    )
+                    ChainOutcome.FAILED
+                }
             if (outcome != null) completion.complete(outcome)
             else runNext(chain, actionIndex + 1, completion)
         }
@@ -108,9 +132,16 @@ internal class SceneActionExecutor(
             )
         val stage =
             try {
-                actions.handlerFor(action.key)?.execute(context)
+                actions[action.key]?.execute(context)
                     ?: throw IllegalStateException("No handler for ${action.key.value}.")
-            } catch (_: Throwable) {
+            } catch (error: Throwable) {
+                report(
+                    chain,
+                    ChainOutcome.FAILED,
+                    "APPLICATION_ACTION_START_FAILED",
+                    "Application action could not start.",
+                    error,
+                )
                 completeFailureOrStale(chain, completion)
                 return
             }
@@ -121,35 +152,104 @@ internal class SceneActionExecutor(
                     try {
                         schedule(
                             Runnable {
-                                if (completion.isDone) return@Runnable
-                                when (current(chain)) {
-                                    false -> {
-                                        completion.complete(ChainOutcome.STALE)
-                                        return@Runnable
-                                    }
-                                    null -> {
-                                        completion.complete(ChainOutcome.FAILED)
-                                        return@Runnable
-                                    }
-                                    true -> Unit
-                                }
-                                when {
-                                    failure != null -> completion.complete(ChainOutcome.FAILED)
-                                    result is SceneActionResult.Success ->
-                                        runNext(chain, actionIndex + 1, completion)
-                                    result is SceneActionResult.Rejected ->
-                                        completion.complete(ChainOutcome.REJECTED)
-                                    else -> completion.complete(ChainOutcome.FAILED)
+                                try {
+                                    completeApplication(
+                                        chain,
+                                        actionIndex,
+                                        completion,
+                                        result,
+                                        failure,
+                                    )
+                                } catch (error: Throwable) {
+                                    report(
+                                        chain,
+                                        ChainOutcome.FAILED,
+                                        "APPLICATION_CALLBACK_FAILED",
+                                        "Application action callback failed.",
+                                        error,
+                                    )
+                                    completeFailureOrStale(chain, completion)
                                 }
                             }
                         )
                     } catch (_: Throwable) {
-                        completeFailureOrStale(chain, completion)
+                        completion.complete(ChainOutcome.FAILED)
                     }
                 },
             )
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
+            report(
+                chain,
+                ChainOutcome.FAILED,
+                "APPLICATION_CALLBACK_REGISTRATION_FAILED",
+                "Application action callback registration failed.",
+                error,
+            )
             completeFailureOrStale(chain, completion)
+        }
+    }
+
+    private fun completeApplication(
+        chain: PendingActionChain,
+        actionIndex: Int,
+        completion: CompletableFuture<ChainOutcome>,
+        result: SceneActionResult?,
+        failure: Throwable?,
+    ) {
+        if (completion.isDone) return
+        when (current(chain)) {
+            false -> {
+                completion.complete(ChainOutcome.STALE)
+                return
+            }
+            null -> {
+                completion.complete(ChainOutcome.FAILED)
+                return
+            }
+            true -> Unit
+        }
+        when {
+            failure != null -> {
+                report(
+                    chain,
+                    ChainOutcome.FAILED,
+                    "APPLICATION_STAGE_FAILED",
+                    "Application action completed exceptionally.",
+                    failure,
+                )
+                completion.complete(ChainOutcome.FAILED)
+            }
+            result is SceneActionResult.Success -> runNext(chain, actionIndex + 1, completion)
+            result is SceneActionResult.Rejected -> {
+                report(
+                    chain,
+                    ChainOutcome.REJECTED,
+                    "APPLICATION_REJECTED",
+                    result.diagnostic,
+                    null,
+                )
+                completion.complete(ChainOutcome.REJECTED)
+            }
+            result is SceneActionResult.Failure -> {
+                report(
+                    chain,
+                    ChainOutcome.FAILED,
+                    "APPLICATION_FAILED",
+                    result.diagnostic,
+                    result.cause,
+                )
+                completion.complete(ChainOutcome.FAILED)
+            }
+            else -> {
+                report(
+                    chain,
+                    ChainOutcome.FAILED,
+                    "APPLICATION_RESULT_MISSING",
+                    "Application action returned no result.",
+                    null,
+                )
+                completion.complete(ChainOutcome.FAILED)
+            }
         }
     }
 
@@ -159,28 +259,31 @@ internal class SceneActionExecutor(
         when (action) {
             is StartAnimationAction -> {
                 val target = requireTarget(action.target)
-                target.state.animation =
-                    LogicalAnimationState(action.animation, chain.input.acceptedNanos)
+                target.state.setAnimation(
+                    target.partId,
+                    LogicalAnimationState(action.animation, clock.nanoTime()),
+                )
                 target.activeHandles.forEach { it.startAnimation(action.animation, 0) }
             }
             is StopAnimationAction -> {
                 val target = requireTarget(action.target)
                 if (
-                    action.animation == null || target.state.animation.animation == action.animation
+                    action.animation == null ||
+                        target.state.animationFor(target.partId).animation == action.animation
                 )
-                    target.state.animation = LogicalAnimationState(null, null)
+                    target.state.setAnimation(target.partId, LogicalAnimationState(null, null))
                 target.activeHandles.forEach { it.stopAnimation(action.animation) }
             }
             is SetViewerScaleAction -> {
                 val target = requireTarget(action.target)
-                val key = ViewerElementKey(player.uuid, target.state.element.id)
-                val state = viewers.setScale(key, action.multiplier)
+                val key = ViewerElementKey(player.uuid, target.state.element.id, target.partId)
+                val state = viewers.setScale(key, action.multiplier, action.transitionMillis)
                 target.activeHandles.forEach { it.applyViewerState(player, state) }
             }
             is SetViewerHighlightAction -> {
                 val target = requireTarget(action.target)
-                val key = ViewerElementKey(player.uuid, target.state.element.id)
-                val state = viewers.setHighlight(key, action.enabled)
+                val key = ViewerElementKey(player.uuid, target.state.element.id, target.partId)
+                val state = viewers.setHighlight(key, action.enabled, action.transitionMillis)
                 target.activeHandles.forEach { it.applyViewerState(player, state) }
             }
             is PlaySoundAction ->
@@ -231,4 +334,29 @@ internal class SceneActionExecutor(
     private fun requireTarget(target: ElementTarget): ResolvedActionTarget =
         targets.resolve(target)
             ?: throw IllegalArgumentException("Invalid action target ${target.element.value}.")
+
+    private fun report(
+        chain: PendingActionChain,
+        outcome: ChainOutcome,
+        code: String,
+        diagnostic: String,
+        cause: Throwable?,
+    ) {
+        try {
+            reportDiagnostic(
+                SceneActionDiagnostic(
+                    chain.input.playerId,
+                    chain.input.npcId,
+                    chain.input.trigger,
+                    chain.key.bindingIndex,
+                    outcome,
+                    code,
+                    diagnostic,
+                    cause,
+                )
+            )
+        } catch (_: Throwable) {
+            // Reporting must never replace the action outcome.
+        }
+    }
 }

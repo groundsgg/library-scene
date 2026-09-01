@@ -5,7 +5,10 @@ import gg.grounds.scene.format.SceneTrigger
 import gg.grounds.scene.format.Vec3
 import gg.grounds.scene.minestom.ScenePlayerPolicy
 import gg.grounds.scene.minestom.internal.runtime.ActiveElement
+import java.util.TreeMap
 import java.util.UUID
+import kotlin.math.floor
+import kotlin.math.max
 import net.minestom.server.entity.Player
 
 internal data class SensorTransition(
@@ -18,13 +21,44 @@ internal class NpcSensorEngine(
     private val playerPolicy: ScenePlayerPolicy,
     private val interactionReach: Double = 5.0,
     private val raycaster: BoundsRaycaster = BoundsRaycaster(),
+    private val cellEdge: Double = 32.0,
 ) {
     private val hovered = mutableMapOf<UUID, LocalId>()
     private val nearby = mutableSetOf<ViewerElementKey>()
+    private val active = mutableMapOf<LocalId, ActiveElement>()
+    private val cells = mutableMapOf<SensorCellKey, MutableMap<LocalId, ActiveElement>>()
+    private var maximumRadius = interactionReach
+    private var lastVisited = 0
 
-    fun update(players: List<Player>, activeNpcs: List<ActiveElement>): List<SensorTransition> {
-        val npcs = activeNpcs.mapNotNull { active -> active.npc?.let { active to it } }
+    fun activate(element: ActiveElement) {
+        val npc = element.npc ?: return
+        deactivate(element.elementId)
+        active[element.elementId] = element
+        cells
+            .getOrPut(cellFor(npc.transform.position.x, npc.transform.position.z)) {
+                TreeMap(compareBy(LocalId::value))
+            }[element.elementId] = element
+        maximumRadius = max(maximumRadius, npc.proximity?.exitRadius ?: 0.0)
+    }
+
+    fun deactivate(elementId: LocalId) {
+        val removed = active.remove(elementId) ?: return
+        val npc = removed.npc ?: return
+        cells[cellFor(npc.transform.position.x, npc.transform.position.z)]?.let { cell ->
+            cell.remove(elementId)
+            if (cell.isEmpty())
+                cells.remove(cellFor(npc.transform.position.x, npc.transform.position.z))
+        }
+        hovered.entries.removeIf { it.value == elementId }
+        maximumRadius =
+            active.values
+                .maxOfOrNull { it.npc?.proximity?.exitRadius ?: interactionReach }
+                ?.coerceAtLeast(interactionReach) ?: interactionReach
+    }
+
+    fun update(players: List<Player>): List<SensorTransition> {
         val transitions = mutableListOf<SensorTransition>()
+        val visited = linkedSetOf<LocalId>()
         players
             .sortedBy { it.uuid.toString() }
             .forEach { player ->
@@ -32,12 +66,14 @@ internal class NpcSensorEngine(
                     transitions += removePlayer(player.uuid)
                     return@forEach
                 }
+                val npcs = candidates(player, visited)
                 val eye = player.eyePosition()
                 val direction = player.position.direction().let { Vec3(it.x(), it.y(), it.z()) }
                 val newHover =
                     npcs
                         .mapNotNull { (active, npc) ->
-                            raycaster.rayDistance(npc, eye, direction, interactionReach)?.let {
+                            if (!npc.visible) return@mapNotNull null
+                            raycaster.rayDistance(active, eye, direction, interactionReach)?.let {
                                 active.elementId to it
                             }
                         }
@@ -59,8 +95,15 @@ internal class NpcSensorEngine(
                 npcs.forEach { (active, npc) ->
                     val sensor = npc.proximity ?: return@forEach
                     val key = ViewerElementKey(player.uuid, active.elementId)
-                    val dx = player.position.x() - npc.transform.position.x
-                    val dz = player.position.z() - npc.transform.position.z
+                    val position =
+                        active
+                            .transformOr(
+                                gg.grounds.scene.minestom.SceneRenderTransform(npc.transform, null)
+                            )
+                            .root
+                            .position
+                    val dx = player.position.x() - position.x
+                    val dz = player.position.z() - position.z
                     val distanceSquared = dx * dx + dz * dz
                     if (
                         key !in nearby && distanceSquared <= sensor.enterRadius * sensor.enterRadius
@@ -85,6 +128,7 @@ internal class NpcSensorEngine(
                     }
                 }
             }
+        lastVisited = visited.size
         return transitions.sortedWith(
             compareBy<SensorTransition>(
                 { it.playerId.toString() },
@@ -114,7 +158,34 @@ internal class NpcSensorEngine(
     fun clear() {
         hovered.clear()
         nearby.clear()
+        active.clear()
+        cells.clear()
+        maximumRadius = interactionReach
+        lastVisited = 0
     }
+
+    fun visitedNpcCount(): Int = lastVisited
+
+    private fun candidates(
+        player: Player,
+        visited: MutableSet<LocalId>,
+    ): List<Pair<ActiveElement, gg.grounds.scene.format.Npc>> {
+        val minimum =
+            cellFor(player.position.x() - maximumRadius, player.position.z() - maximumRadius)
+        val maximum =
+            cellFor(player.position.x() + maximumRadius, player.position.z() + maximumRadius)
+        return buildList {
+            for (x in minimum.x..maximum.x) for (z in minimum.z..maximum.z) {
+                cells[SensorCellKey(x, z)].orEmpty().values.forEach { element ->
+                    visited += element.elementId
+                    element.npc?.let { add(element to it) }
+                }
+            }
+        }
+    }
+
+    private fun cellFor(x: Double, z: Double) =
+        SensorCellKey(floor(x / cellEdge).toInt(), floor(z / cellEdge).toInt())
 
     private fun Player.eyePosition() = Vec3(position.x(), position.y() + eyeHeight, position.z())
 
@@ -127,3 +198,5 @@ internal class NpcSensorEngine(
             else -> 4
         }
 }
+
+private data class SensorCellKey(val x: Int, val z: Int)

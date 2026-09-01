@@ -1,10 +1,15 @@
 package gg.grounds.scene.minestom
 
 import gg.grounds.scene.format.*
+import gg.grounds.scene.minestom.internal.RendererCapabilityKey
 import gg.grounds.scene.minestom.internal.SceneReadiness
 import gg.grounds.scene.minestom.internal.SceneReadinessRequest
+import java.util.concurrent.CompletableFuture
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
+import kotlin.test.assertSame
 
 class SceneReadinessTest {
     @Test
@@ -81,6 +86,98 @@ class SceneReadinessTest {
         )
     }
 
+    @Test
+    fun `prepares immutable renderer and action capability snapshots`() {
+        val rendererFactory = SceneAssetRendererFactory { CompletableFuture() }
+        val actionHandler = SceneActionHandler {
+            CompletableFuture.completedFuture(SceneActionResult.Success)
+        }
+        val rendererLookups = mutableMapOf<Pair<AssetKey, AssetKind>, Int>()
+        val actionLookups = mutableMapOf<ActionKey, Int>()
+        val renderers = SceneAssetRendererRegistry { asset, kind ->
+            val key = asset to kind
+            val invocation = rendererLookups.merge(key, 1, Int::plus)!!
+            rendererFactory.takeIf { invocation == 1 }
+        }
+        val actions = SceneActionRegistry { key ->
+            val invocation = actionLookups.merge(key, 1, Int::plus)!!
+            actionHandler.takeIf { invocation == 1 }
+        }
+
+        val readiness =
+            SceneReadiness.prepare(
+                request(
+                    renderers,
+                    RecordingEffects(setOf(AssetKind.SOUND, AssetKind.PARTICLE)),
+                    actions,
+                )
+            )
+
+        assertEquals(emptyList(), readiness.problems)
+        val capabilities = assertNotNull(readiness.capabilities)
+        assertSame(
+            rendererFactory,
+            capabilities.rendererFactories[
+                    RendererCapabilityKey(AssetKey("test:prop"), AssetKind.PROP)],
+        )
+        assertSame(actionHandler, capabilities.actionHandlers[ActionKey("test:application")])
+        assertFailsWith<UnsupportedOperationException> {
+            @Suppress("UNCHECKED_CAST")
+            (capabilities.rendererFactories
+                    as MutableMap<RendererCapabilityKey, SceneAssetRendererFactory>)
+                .clear()
+        }
+        assertFailsWith<UnsupportedOperationException> {
+            @Suppress("UNCHECKED_CAST")
+            (capabilities.actionHandlers as MutableMap<ActionKey, SceneActionHandler>).clear()
+        }
+    }
+
+    @Test
+    fun `rejects runtime identity for a different scene before preparation`() {
+        val readiness =
+            SceneReadiness.prepare(
+                request(
+                        RecordingRenderers(setOf(AssetKind.PROP, AssetKind.NPC_BODY)),
+                        RecordingEffects(setOf(AssetKind.SOUND, AssetKind.PARTICLE)),
+                        RecordingActions(setOf(ActionKey("test:application"))),
+                    )
+                    .copy(identity = SceneRuntimeIdentity(SceneId("test:other"), "map", 1))
+            )
+
+        assertEquals(
+            listOf(SceneRuntimeProblemCode.INVALID_CONFIG),
+            readiness.problems.map(SceneRuntimeProblem::code),
+        )
+        assertEquals("identity/sceneId", readiness.problems.single().path)
+    }
+
+    @Test
+    fun `invisible elements require no renderer capability`() {
+        val base = scene()
+        val invisibleScene =
+            SceneDocument(
+                base.schemaVersion,
+                base.id,
+                base.metadata,
+                base.catalogs,
+                base.groups,
+                base.elements.map(::invisible),
+            )
+        val readiness =
+            SceneReadiness.prepare(
+                request(
+                        RecordingRenderers(emptySet()),
+                        RecordingEffects(setOf(AssetKind.SOUND, AssetKind.PARTICLE)),
+                        RecordingActions(setOf(ActionKey("test:application"))),
+                    )
+                    .copy(scene = invisibleScene)
+            )
+
+        assertEquals(emptyList(), readiness.problems)
+        assertEquals(emptyMap(), readiness.capabilities!!.rendererFactories)
+    }
+
     private fun assertMissing(
         expected: SceneRuntimeProblemCode,
         renderers: RecordingRenderers,
@@ -96,9 +193,9 @@ class SceneReadinessTest {
     }
 
     private fun request(
-        renderers: RecordingRenderers,
-        effects: RecordingEffects,
-        actions: RecordingActions,
+        renderers: SceneAssetRendererRegistry,
+        effects: SceneEffectSink,
+        actions: SceneActionRegistry,
     ) =
         SceneReadinessRequest(
             scene = scene(),
@@ -107,6 +204,7 @@ class SceneReadinessTest {
             renderers = renderers,
             effects = effects,
             actionRegistry = actions,
+            identity = SceneRuntimeIdentity(scene().id, "map", 1),
             config = SceneRuntimeConfig(),
         )
 
@@ -206,6 +304,36 @@ class SceneReadinessTest {
 
     private fun transform() =
         Transform(Vec3(0.0, 0.0, 0.0), EulerRotation(0.0, 0.0, 0.0), Vec3(1.0, 1.0, 1.0))
+
+    private fun invisible(element: SceneElement): SceneElement =
+        when (element) {
+            is Prop -> element.copy(visible = false)
+            is CompositeProp ->
+                CompositeProp(
+                    element.id,
+                    element.group,
+                    element.transform,
+                    false,
+                    element.activation,
+                    element.parts,
+                )
+            is Npc ->
+                Npc(
+                    element.id,
+                    element.group,
+                    element.transform,
+                    false,
+                    element.activation,
+                    element.body,
+                    element.label,
+                    element.labelOffset,
+                    element.look,
+                    element.initialAnimation,
+                    element.interactionBounds,
+                    element.proximity,
+                    element.bindings,
+                )
+        }
 
     private class RecordingRenderers(private val supported: Set<AssetKind>) :
         SceneAssetRendererRegistry {

@@ -7,9 +7,30 @@ import net.minestom.server.instance.Instance
 
 data class SceneRenderTransform(val root: Transform, val local: Transform?)
 
+/** Monotonic transition snapshot supplied to a renderer for one viewer and resolved target. */
+data class SceneViewerScaleTransition(
+    val startedNanos: Long,
+    val durationNanos: Long,
+    val start: Double,
+    val target: Double,
+    val current: Double,
+)
+
+/** Monotonic transition snapshot supplied to a renderer for one viewer and resolved target. */
+data class SceneViewerHighlightTransition(
+    val startedNanos: Long,
+    val durationNanos: Long,
+    val start: Boolean,
+    val target: Boolean,
+    val current: Boolean,
+)
+
+/** Current viewer-specific values plus any in-progress transition metadata. */
 data class SceneViewerVisualState(
     val scaleMultiplier: Double = 1.0,
     val highlighted: Boolean = false,
+    val scaleTransition: SceneViewerScaleTransition? = null,
+    val highlightTransition: SceneViewerHighlightTransition? = null,
 )
 
 data class SceneAssetRenderContext(
@@ -18,7 +39,16 @@ data class SceneAssetRenderContext(
     val partId: LocalId?,
     val asset: AssetKey,
     val transform: SceneRenderTransform,
-)
+) {
+    val elementIdValue: String
+        get() = elementId.value
+
+    val partIdValue: String?
+        get() = partId?.value
+
+    val assetValue: String
+        get() = asset.value
+}
 
 fun interface SceneAssetRendererFactory {
     fun create(context: SceneAssetRenderContext): CompletionStage<RenderedAssetHandle>

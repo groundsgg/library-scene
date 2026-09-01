@@ -39,6 +39,45 @@ class SpatialActivationTest {
     }
 
     @Test
+    fun `controller evaluation does not visit a distant inactive population`() {
+        val controller =
+            controller(
+                List(10) {
+                    IndexedElement(
+                        LocalId("near$it"),
+                        ActivationPolicy.AUTOMATIC,
+                        Vec3(0.0, 0.0, 0.0),
+                    )
+                } +
+                    List(1_000) {
+                        IndexedElement(
+                            LocalId("far$it"),
+                            ActivationPolicy.AUTOMATIC,
+                            Vec3(10_000.0, 0.0, 10_000.0),
+                        )
+                    }
+            )
+
+        assertEquals(10, controller.evaluate(listOf(Vec.ZERO)).size)
+        assertEquals(10, controller.visitedElementCount())
+    }
+
+    @Test
+    fun `pending automatic activation is invalidated as soon as eligibility disappears`() {
+        val element =
+            IndexedElement(LocalId("automatic"), ActivationPolicy.AUTOMATIC, Vec3(0.0, 0.0, 0.0))
+        val controller = controller(element)
+
+        assertEquals(
+            listOf(ActivationTransition(element.id, ActivationTransitionKind.ACTIVATE)),
+            controller.evaluate(listOf(Vec.ZERO)),
+        )
+        controller.markActivating(element.id)
+
+        assertEquals(listOf(element.id), controller.reevaluate(emptyList()))
+    }
+
+    @Test
     fun `always activates immediately while automatic activates at 64 blocks`() {
         val controller =
             controller(

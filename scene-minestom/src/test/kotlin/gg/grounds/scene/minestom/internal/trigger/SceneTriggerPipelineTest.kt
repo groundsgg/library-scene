@@ -2,6 +2,8 @@ package gg.grounds.scene.minestom.internal.trigger
 
 import gg.grounds.scene.format.*
 import gg.grounds.scene.minestom.ScenePlayerPolicy
+import gg.grounds.scene.minestom.internal.NANOS_PER_MILLI
+import gg.grounds.scene.minestom.internal.millisToNanosSaturated
 import java.net.InetSocketAddress
 import java.net.SocketAddress
 import java.util.UUID
@@ -118,6 +120,41 @@ class SceneTriggerPipelineTest {
             TriggerEngine(target, resolver, Policy(eligible = false), { listOf(binding) })
                 .accept(input(player.uuid, 1)),
         )
+    }
+
+    @Test
+    fun `debounce and cooldown saturate millis and survive monotonic nano wraparound`() {
+        val largestExactlyRepresentableMillis = Long.MAX_VALUE / NANOS_PER_MILLI
+        assertEquals(
+            largestExactlyRepresentableMillis * NANOS_PER_MILLI,
+            millisToNanosSaturated(largestExactlyRepresentableMillis),
+        )
+        assertEquals(Long.MAX_VALUE, millisToNanosSaturated(Long.MAX_VALUE))
+        val instance = instance()
+        val player = player(instance)
+        val start = Long.MAX_VALUE - 5L
+        val afterWrap = Long.MIN_VALUE + 5L
+        val debounce =
+            TriggerEngine(
+                instance,
+                { player },
+                Policy(),
+                { listOf(binding(debounce = Long.MAX_VALUE)) },
+            )
+        val first = debounce.accept(input(player.uuid, start)).single()
+        debounce.complete(first.key, first.generation, false, start)
+        assertEquals(emptyList(), debounce.accept(input(player.uuid, afterWrap)))
+
+        val cooldown =
+            TriggerEngine(
+                instance,
+                { player },
+                Policy(),
+                { listOf(binding(cooldown = Long.MAX_VALUE)) },
+            )
+        val succeeded = cooldown.accept(input(player.uuid, start)).single()
+        cooldown.complete(succeeded.key, succeeded.generation, true, start)
+        assertEquals(emptyList(), cooldown.accept(input(player.uuid, afterWrap)))
     }
 
     private fun binding(debounce: Long = 0, cooldown: Long = 0) =

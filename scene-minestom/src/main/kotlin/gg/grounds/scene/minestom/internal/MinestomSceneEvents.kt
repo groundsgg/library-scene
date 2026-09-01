@@ -64,7 +64,7 @@ internal class MinestomSceneEvents(
         val eye =
             Vec3(player.position.x(), player.position.y() + player.eyeHeight, player.position.z())
         val direction = player.position.direction().let { Vec3(it.x(), it.y(), it.z()) }
-        if (raycaster.rayDistance(npc, eye, direction, INTERACTION_REACH) == null) return
+        if (raycaster.rayDistance(active, eye, direction, INTERACTION_REACH) == null) return
         accept(SceneTriggerInput(player.uuid, elementId, trigger, hand, acceptedNanos()))
     }
 

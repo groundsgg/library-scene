@@ -21,7 +21,10 @@ data class SceneActionContext(
     val acceptedNanos: Long,
     val arguments: Map<LocalId, ApplicationArgument>,
     val viewerState: SceneViewerVisualState,
-)
+) {
+    val elementIdValue: String
+        get() = elementId.value
+}
 
 sealed interface SceneActionResult {
     data object Success : SceneActionResult

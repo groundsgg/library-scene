@@ -5,6 +5,7 @@ import gg.grounds.scene.format.LookBehavior
 import gg.grounds.scene.minestom.SceneClock
 import gg.grounds.scene.minestom.ScenePlayerPolicy
 import gg.grounds.scene.minestom.SceneRenderTransform
+import gg.grounds.scene.minestom.internal.elapsedNanos
 import gg.grounds.scene.minestom.internal.runtime.ActiveElement
 import kotlin.math.atan2
 import kotlin.math.sqrt
@@ -15,7 +16,6 @@ internal class LookController(
     private val playerPolicy: ScenePlayerPolicy,
 ) {
     private val updatedAt = mutableMapOf<gg.grounds.scene.format.LocalId, Long>()
-    private val rotations = mutableMapOf<gg.grounds.scene.format.LocalId, EulerRotation>()
 
     fun update(
         players: List<Player>,
@@ -24,7 +24,6 @@ internal class LookController(
     ) {
         val activeIds = activeNpcs.map { it.elementId }.toSet()
         updatedAt.keys.removeIf { it !in activeIds }
-        rotations.keys.removeIf { it !in activeIds }
         val now = clock.nanoTime()
         activeNpcs.forEach { active ->
             try {
@@ -37,20 +36,21 @@ internal class LookController(
 
     fun removeElement(elementId: gg.grounds.scene.format.LocalId) {
         updatedAt.remove(elementId)
-        rotations.remove(elementId)
     }
 
     private fun updateActive(players: List<Player>, active: ActiveElement, now: Long) {
         val npc = active.npc ?: return
         val behavior = npc.look as? LookBehavior.TrackNearest ?: return
-        val entity = active.npcEntities?.interaction ?: return
+        if (active.npcEntities?.interaction == null) return
+        val currentTransform = active.transformOr(SceneRenderTransform(npc.transform, null))
         val target =
             players
                 .filter { player ->
                     if (!playerPolicy.isEligible(player)) return@filter false
-                    val dx = player.position.x() - npc.transform.position.x
-                    val dy = player.position.y() + player.eyeHeight - npc.transform.position.y
-                    val dz = player.position.z() - npc.transform.position.z
+                    val dx = player.position.x() - currentTransform.root.position.x
+                    val dy =
+                        player.position.y() + player.eyeHeight - currentTransform.root.position.y
+                    val dz = player.position.z() - currentTransform.root.position.z
                     dx * dx + dy * dy + dz * dz <= behavior.maxDistance * behavior.maxDistance
                 }
                 .minWithOrNull(
@@ -58,25 +58,24 @@ internal class LookController(
                         {
                             distanceSquared(
                                 it,
-                                npc.transform.position.x,
-                                npc.transform.position.y,
-                                npc.transform.position.z,
+                                currentTransform.root.position.x,
+                                currentTransform.root.position.y,
+                                currentTransform.root.position.z,
                             )
                         },
                         { it.uuid.toString() },
                     )
                 ) ?: return
-        val current = rotations[active.elementId] ?: npc.transform.rotation
-        val dx = target.position.x() - npc.transform.position.x
-        val dy = target.position.y() + target.eyeHeight - npc.transform.position.y
-        val dz = target.position.z() - npc.transform.position.z
+        val current = currentTransform.root.rotation
+        val dx = target.position.x() - currentTransform.root.position.x
+        val dy = target.position.y() + target.eyeHeight - currentTransform.root.position.y
+        val dz = target.position.z() - currentTransform.root.position.z
         val desiredYaw = Math.toDegrees(atan2(-dx, dz)).toFloat()
         val desiredPitch =
             if (behavior.yawOnly) current.pitch.toFloat()
             else Math.toDegrees(-atan2(dy, sqrt(dx * dx + dz * dz))).toFloat()
         val elapsed =
-            updatedAt[active.elementId]?.let { (now - it).coerceAtLeast(0L) / 1_000_000_000.0 }
-                ?: 0.0
+            updatedAt[active.elementId]?.let { elapsedNanos(now, it) / 1_000_000_000.0 } ?: 0.0
         val delta = (behavior.maxTurnDegreesPerSecond * elapsed).toFloat()
         val rotation =
             EulerRotation(
@@ -84,12 +83,10 @@ internal class LookController(
                 clampAngle(current.pitch.toFloat(), desiredPitch, delta).toDouble(),
                 current.roll,
             )
-        rotations[active.elementId] = rotation
         updatedAt[active.elementId] = now
-        active.handles.forEach {
-            it.applyTransform(SceneRenderTransform(npc.transform.copy(rotation = rotation), null))
-        }
-        entity.setView(rotation.yaw.toFloat(), rotation.pitch.toFloat())
+        active.updateRuntimeTransform(
+            SceneRenderTransform(currentTransform.root.copy(rotation = rotation), null)
+        )
     }
 
     private fun distanceSquared(player: Player, x: Double, y: Double, z: Double): Double {

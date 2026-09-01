@@ -82,6 +82,53 @@ class SceneRuntimeLifecycleIntegrationTest {
     }
 
     @Test
+    fun `automatic activation aborts immediately when its last eligible player leaves`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val player =
+            Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
+                it.setInstance(instance, Pos.ZERO).join()
+            }
+        val renderer = RecordingRenderer(instance)
+        val config =
+            SceneRuntimeConfig(
+                activationDistance = 4.0,
+                deactivationDistance = 6.0,
+                spatialIntervalTicks = 100,
+            )
+        val creation =
+            SceneRuntimeFactory.create(
+                    request(
+                        instance,
+                        renderer,
+                        RecordingActions(),
+                        automaticScene(
+                            transform =
+                                Transform(
+                                    Vec3(0.0, 0.0, 0.0),
+                                    EulerRotation(0.0, 0.0, 0.0),
+                                    Vec3(1.0, 1.0, 1.0),
+                                )
+                        ),
+                        config,
+                    )
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { creation.isDone }
+        val runtime = assertIs<SceneRuntimeCreationResult.Success>(creation.get()).runtime
+        tickUntil(instance) { renderer.createCalls == 1 }
+        val pendingInteraction =
+            instance.entities.single { it.entityType == EntityType.INTERACTION }
+
+        instance.eventNode().call(PlayerDisconnectEvent(player))
+        assertTrue(pendingInteraction.isRemoved)
+        Thread.startVirtualThread { renderer.completion.complete(renderer.handle) }.join()
+        tickUntil(instance) { renderer.handle.closed }
+
+        assertEquals(1, renderer.createCalls)
+        runtime.close().toCompletableFuture().also { close -> tickUntil(instance) { close.isDone } }
+    }
+
+    @Test
     fun `inactive npc emits no sensor trigger and keeps proximity membership for reactivation`() {
         val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
         val player =
@@ -143,6 +190,99 @@ class SceneRuntimeLifecycleIntegrationTest {
         tickUntil(instance) { renderer.handles.size == 2 }
         repeat(3) { instance.tick(0) }
         assertEquals(1, actions.contexts.count { it.trigger == SceneTrigger.PROXIMITY_ENTER })
+    }
+
+    @Test
+    fun `policy invalidation clears logical viewer state even when renderer clear throws`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val player =
+            Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
+                it.setInstance(instance, Pos.ZERO).join()
+            }
+        val policy = TogglePolicy()
+        val renderer = RecordingRenderer(instance)
+        val actions = RecordingActions()
+        val creation =
+            SceneRuntimeFactory.create(request(instance, renderer, actions, playerPolicy = policy))
+                .toCompletableFuture()
+        tickUntil(instance) { renderer.createCalls == 1 }
+        renderer.completion.complete(renderer.handle)
+        tickUntil(instance) { creation.isDone }
+        assertIs<SceneRuntimeCreationResult.Success>(creation.get())
+        val interaction = instance.entities.single { it.entityType == EntityType.INTERACTION }
+
+        instance.eventNode().call(EntityAttackEvent(player, interaction))
+        assertEquals(2.0, actions.contexts.last().viewerState.scaleMultiplier)
+        instance.tick(0)
+        renderer.handle.failNextViewerClear = true
+        policy.eligible = false
+        instance.tick(0)
+        policy.eligible = true
+        instance
+            .eventNode()
+            .call(PlayerEntityInteractEvent(player, interaction, PlayerHand.OFF, Vec.ZERO))
+
+        assertEquals(1.0, actions.contexts.last().viewerState.scaleMultiplier)
+        assertEquals(listOf(player.uuid), renderer.handle.clearedViewers)
+    }
+
+    @Test
+    fun `viewer state reapply failure closes activation before active publication`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val player =
+            Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
+                it.setInstance(instance, Pos.ZERO).join()
+            }
+        val renderer = ViewerFailingRenderer(instance)
+        val config =
+            SceneRuntimeConfig(
+                activationDistance = 8.0,
+                deactivationDistance = 10.0,
+                spatialIntervalTicks = 1,
+            )
+        val creation =
+            SceneRuntimeFactory.create(
+                    request(instance, renderer, RecordingActions(), viewerReapplyScene(), config)
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { creation.isDone }
+        assertIs<SceneRuntimeCreationResult.Success>(creation.get())
+        val guideInteraction = instance.entities.single { it.entityType == EntityType.INTERACTION }
+
+        instance.eventNode().call(EntityAttackEvent(player, guideInteraction))
+        player.teleport(Pos(100.0, 0.0, 0.0)).join()
+        tickUntil(instance) { renderer.targetHandle?.closed == true }
+
+        assertEquals(2, renderer.createCalls)
+        assertEquals(
+            listOf(guideInteraction.uuid),
+            instance.entities.filter { it.entityType == EntityType.INTERACTION }.map { it.uuid },
+        )
+        repeat(3) { instance.tick(0) }
+        assertEquals(2, renderer.createCalls)
+    }
+
+    @Test
+    fun `runtime executes only the action handler captured by readiness`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val player =
+            Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
+                it.setInstance(instance, Pos.ZERO).join()
+            }
+        val renderer = ImmediateRenderer(instance)
+        val actions = OneShotActions()
+        val creation =
+            SceneRuntimeFactory.create(request(instance, renderer, actions)).toCompletableFuture()
+        tickUntil(instance) { creation.isDone }
+        assertIs<SceneRuntimeCreationResult.Success>(creation.get())
+        val interaction = instance.entities.single { it.entityType == EntityType.INTERACTION }
+
+        instance
+            .eventNode()
+            .call(PlayerEntityInteractEvent(player, interaction, PlayerHand.OFF, Vec.ZERO))
+
+        assertEquals(listOf("test:right"), actions.executed)
+        assertEquals(mapOf("test:left" to 1, "test:right" to 1), actions.lookups)
     }
 
     @Test
@@ -235,6 +375,7 @@ class SceneRuntimeLifecycleIntegrationTest {
         assertEquals(SceneHand.MAIN, actions.contexts.last().hand)
         assertEquals(2.0, actions.contexts.last().viewerState.scaleMultiplier)
 
+        handle.failNextViewerClear = true
         instance.eventNode().call(PlayerDisconnectEvent(player))
         assertEquals(listOf(player.uuid), handle.clearedViewers)
         actions.firstRightCompletion.complete(SceneActionResult.Success)
@@ -265,9 +406,10 @@ class SceneRuntimeLifecycleIntegrationTest {
     private fun request(
         instance: Instance,
         renderer: SceneAssetRendererRegistry,
-        actions: RecordingActions,
+        actions: SceneActionRegistry,
         scene: SceneDocument = scene(),
         config: SceneRuntimeConfig = SceneRuntimeConfig(),
+        playerPolicy: ScenePlayerPolicy = AllowAllPlayers,
     ) =
         SceneRuntimeRequest(
             scene = scene,
@@ -277,7 +419,7 @@ class SceneRuntimeLifecycleIntegrationTest {
             instance = instance,
             renderers = renderer,
             effects = NoEffects,
-            playerPolicy = AllowAllPlayers,
+            playerPolicy = playerPolicy,
             actionRegistry = actions,
             clock = SceneClock { 1_000_000_000L },
             config = config,
@@ -378,6 +520,59 @@ class SceneRuntimeLifecycleIntegrationTest {
         )
     }
 
+    private fun viewerReapplyScene(): SceneDocument {
+        val base = scene()
+        val guide = base.elements.single() as Npc
+        val trigger =
+            Npc(
+                guide.id,
+                guide.group,
+                guide.transform,
+                guide.visible,
+                ActivationPolicy.ALWAYS,
+                guide.body,
+                guide.label,
+                guide.labelOffset,
+                guide.look,
+                guide.initialAnimation,
+                guide.interactionBounds,
+                guide.proximity,
+                listOf(
+                    TriggerBinding(
+                        SceneTrigger.LEFT_CLICK,
+                        emptyList(),
+                        0,
+                        0,
+                        listOf(SetViewerScaleAction(ElementTarget(LocalId("target"), null), 2.0, 0)),
+                    )
+                ),
+            )
+        val target =
+            Npc(
+                LocalId("target"),
+                null,
+                Transform(Vec3(100.0, 0.0, 0.0), EulerRotation(0.0, 0.0, 0.0), Vec3(1.0, 1.0, 1.0)),
+                true,
+                ActivationPolicy.AUTOMATIC,
+                guide.body,
+                null,
+                guide.labelOffset,
+                LookBehavior.Fixed,
+                null,
+                guide.interactionBounds,
+                null,
+                emptyList(),
+            )
+        return SceneDocument(
+            base.schemaVersion,
+            base.id,
+            base.metadata,
+            base.catalogs,
+            base.groups,
+            listOf(trigger, target),
+        )
+    }
+
     private fun assets() =
         AssetCatalog(
             CatalogId("test:assets"),
@@ -442,19 +637,47 @@ class SceneRuntimeLifecycleIntegrationTest {
             CompletableFuture.completedFuture(RecordingHandle(instance).also { handles += it })
     }
 
+    private class ViewerFailingRenderer(private val instance: Instance) :
+        SceneAssetRendererRegistry, SceneAssetRendererFactory {
+        var createCalls = 0
+        var targetHandle: RecordingHandle? = null
+
+        override fun rendererFor(asset: AssetKey, kind: AssetKind) = this
+
+        override fun create(
+            context: SceneAssetRenderContext
+        ): CompletionStage<RenderedAssetHandle> {
+            createCalls++
+            val handle = RecordingHandle(instance)
+            if (context.elementId == LocalId("target")) {
+                handle.failViewerApply = true
+                targetHandle = handle
+            }
+            return CompletableFuture.completedFuture(handle)
+        }
+    }
+
     private class RecordingHandle(private val instance: Instance) : RenderedAssetHandle {
         val animationAdvances = mutableListOf<Long>()
         val clearedViewers = mutableListOf<UUID>()
         var closed = false
         var entitiesRemovedWhenClosed = false
         var failNextAnimationAdvance = false
+        var failNextViewerClear = false
+        var failViewerApply = false
 
         override fun applyTransform(transform: SceneRenderTransform) = Unit
 
-        override fun applyViewerState(player: Player, state: SceneViewerVisualState) = Unit
+        override fun applyViewerState(player: Player, state: SceneViewerVisualState) {
+            if (failViewerApply) throw IllegalStateException("viewer apply failed")
+        }
 
         override fun clearViewerState(player: Player) {
             clearedViewers += player.uuid
+            if (failNextViewerClear) {
+                failNextViewerClear = false
+                throw IllegalStateException("viewer clear failed")
+            }
         }
 
         override fun startAnimation(animation: LocalId, elapsedMillis: Long) = Unit
@@ -492,6 +715,20 @@ class SceneRuntimeLifecycleIntegrationTest {
             }
     }
 
+    private class OneShotActions : SceneActionRegistry {
+        val lookups = mutableMapOf<String, Int>()
+        val executed = mutableListOf<String>()
+
+        override fun handlerFor(key: ActionKey): SceneActionHandler? {
+            val invocation = lookups.merge(key.value, 1, Int::plus)!!
+            if (invocation != 1) return null
+            return SceneActionHandler {
+                executed += key.value
+                CompletableFuture.completedFuture(SceneActionResult.Success)
+            }
+        }
+    }
+
     private data object NoEffects : SceneEffectSink {
         override fun supports(asset: AssetKey, kind: AssetKind) = true
 
@@ -510,6 +747,12 @@ class SceneRuntimeLifecycleIntegrationTest {
 
     private data object AllowAllPlayers : ScenePlayerPolicy {
         override fun isEligible(player: Player) = true
+
+        override fun hasPermission(player: Player, permission: String) = true
+    }
+
+    private class TogglePolicy(var eligible: Boolean = true) : ScenePlayerPolicy {
+        override fun isEligible(player: Player) = eligible
 
         override fun hasPermission(player: Player, permission: String) = true
     }

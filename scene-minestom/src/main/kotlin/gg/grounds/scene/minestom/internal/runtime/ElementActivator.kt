@@ -9,9 +9,11 @@ import gg.grounds.scene.format.SceneElement
 import gg.grounds.scene.format.Vec3
 import gg.grounds.scene.minestom.RenderedAssetHandle
 import gg.grounds.scene.minestom.SceneAssetRenderContext
-import gg.grounds.scene.minestom.SceneAssetRendererRegistry
+import gg.grounds.scene.minestom.SceneAssetRendererFactory
 import gg.grounds.scene.minestom.SceneClock
 import gg.grounds.scene.minestom.SceneRenderTransform
+import gg.grounds.scene.minestom.internal.RendererCapabilityKey
+import gg.grounds.scene.minestom.internal.elapsedNanos
 import gg.grounds.scene.minestom.internal.geometry.affine
 import gg.grounds.scene.minestom.internal.geometry.transformed
 import java.util.UUID
@@ -37,7 +39,7 @@ internal interface ElementActivation {
 
 internal class ElementActivator(
     private val instance: Instance,
-    private val renderers: SceneAssetRendererRegistry,
+    private val rendererFactories: Map<RendererCapabilityKey, SceneAssetRendererFactory>,
     private val clock: SceneClock,
     private val schedule: (Runnable) -> Unit = Runnable::run,
 ) {
@@ -56,47 +58,53 @@ internal class ElementActivator(
         val generation = state.generation
         val requested = renderRequests(state.element)
         val npcElement = state.element as? Npc
-        val activation =
-            Activation(state, generation, requested.size, requested.size, retainUntilClaimed)
+        val activation = Activation(state, generation, requested, retainUntilClaimed)
 
-        npcElement?.let { npc ->
-            try {
-                val platformEntities = createNpcEntities(npc)
-                if (activation.attach(platformEntities)) {
-                    platformEntities.setInstanceStages(npc).forEach { stage ->
-                        stage.whenComplete { _, error ->
-                            activation.schedule {
+        npcElement
+            ?.takeIf { it.visible }
+            ?.let { npc ->
+                try {
+                    val platformEntities = createNpcEntities(npc)
+                    if (activation.attach(platformEntities)) {
+                        platformEntities.setInstanceStages(npc).forEach { stage ->
+                            observe(stage, activation) { _, error ->
                                 if (error != null) activation.failed(error.unwrap())
                                 else activation.resourceCompleted()
                             }
                         }
                     }
+                } catch (error: Throwable) {
+                    activation.failed(error)
                 }
-            } catch (error: Throwable) {
-                activation.failed(error)
             }
-        }
         requested.forEachIndexed { index, request ->
             if (!activation.isOpen()) return@forEachIndexed
             val stage =
                 try {
                     val factory =
-                        requireNotNull(renderers.rendererFor(request.context.asset, request.kind)) {
+                        requireNotNull(
+                            rendererFactories[
+                                RendererCapabilityKey(request.context.asset, request.kind)]
+                        ) {
                             "No renderer is available for ${request.context.asset.value}."
                         }
-                    factory.create(request.context)
+                    requireNotNull(factory.create(request.context)) {
+                        "Renderer factory returned a null CompletionStage."
+                    }
                 } catch (error: Throwable) {
                     activation.failed(error)
                     return@forEachIndexed
                 }
-            stage.whenComplete { handle, error ->
-                activation.schedule {
-                    if (error != null) activation.failed(error.unwrap())
-                    else activation.handleCompleted(index, handle)
-                }
+            observe(stage, activation) { handle, error ->
+                if (error != null) activation.failed(error.unwrap())
+                else
+                    activation.handleCompleted(
+                        index,
+                        requireNotNull(handle) { "Renderer stage completed with a null handle." },
+                    )
             }
         }
-        if (requested.isEmpty() && npcElement == null) activation.completed()
+        if (requested.isEmpty() && npcElement?.visible != true) activation.completed()
         return activation
     }
 
@@ -107,24 +115,43 @@ internal class ElementActivator(
 
     fun interactionElementId(interactionId: UUID): LocalId? = interactionIds[interactionId]
 
-    private fun renderRequests(element: SceneElement): List<RenderRequest> =
-        when (element) {
-            is Prop ->
-                listOf(RenderRequest(AssetKind.PROP, context(element, null, element.asset, null)))
-            is CompositeProp ->
-                element.parts
-                    .sortedBy { it.id.value }
-                    .map { part ->
-                        RenderRequest(
-                            AssetKind.PROP,
-                            context(element, part.id, part.asset, part.transform),
-                        )
-                    }
-            is Npc ->
-                listOf(
-                    RenderRequest(AssetKind.NPC_BODY, context(element, null, element.body, null))
-                )
+    private fun <T> observe(
+        stage: CompletionStage<T>,
+        activation: Activation,
+        callback: (T?, Throwable?) -> Unit,
+    ) {
+        try {
+            stage.whenComplete { value, error -> activation.schedule { callback(value, error) } }
+        } catch (error: Throwable) {
+            activation.failed(error)
         }
+    }
+
+    private fun renderRequests(element: SceneElement): List<RenderRequest> =
+        if (!element.visible) emptyList()
+        else
+            when (element) {
+                is Prop ->
+                    listOf(
+                        RenderRequest(AssetKind.PROP, context(element, null, element.asset, null))
+                    )
+                is CompositeProp ->
+                    element.parts
+                        .sortedBy { it.id.value }
+                        .map { part ->
+                            RenderRequest(
+                                AssetKind.PROP,
+                                context(element, part.id, part.asset, part.transform),
+                            )
+                        }
+                is Npc ->
+                    listOf(
+                        RenderRequest(
+                            AssetKind.NPC_BODY,
+                            context(element, null, element.body, null),
+                        )
+                    )
+            }
 
     private fun context(
         element: SceneElement,
@@ -196,15 +223,15 @@ internal class ElementActivator(
     private inner class Activation(
         private val state: LogicalElementState,
         private val generation: Long,
-        private var pending: Int,
-        handleCount: Int,
+        private val requests: List<RenderRequest>,
         private val retainUntilClaimed: Boolean,
     ) : ElementActivation {
         private val future = CompletableFuture<ActiveElement>()
         override val stage: CompletionStage<ActiveElement>
             get() = future
 
-        private val handles = arrayOfNulls<RenderedAssetHandle>(handleCount)
+        private var pending: Int = requests.size
+        private val handles = arrayOfNulls<RenderedAssetHandle>(requests.size)
         private var npc: NpcPlatformEntities? = null
         private var terminal = false
         private var terminalFailure: Throwable? = null
@@ -241,7 +268,15 @@ internal class ElementActivator(
 
         fun schedule(action: () -> Unit) {
             try {
-                schedule(Runnable(action))
+                schedule(
+                    Runnable {
+                        try {
+                            action()
+                        } catch (error: Throwable) {
+                            failed(error)
+                        }
+                    }
+                )
             } catch (error: Throwable) {
                 failed(error)
             }
@@ -295,11 +330,15 @@ internal class ElementActivator(
                 return
             }
             try {
-                state.animation.animation?.let { animation ->
-                    val elapsedMillis =
-                        state.animation.startedNanos?.let { (clock.nanoTime() - it) / 1_000_000 }
-                            ?: 0
-                    completedHandles.forEach { it.startAnimation(animation, elapsedMillis) }
+                completedHandles.forEachIndexed { index, handle ->
+                    val animationState = state.animationFor(requests[index].context.partId)
+                    animationState.animation?.let { animation ->
+                        val elapsedMillis =
+                            animationState.startedNanos?.let {
+                                elapsedNanos(clock.nanoTime(), it) / 1_000_000
+                            } ?: 0
+                        handle.startAnimation(animation, elapsedMillis)
+                    }
                 }
             } catch (error: Throwable) {
                 failed(error)
@@ -314,6 +353,9 @@ internal class ElementActivator(
                     completedHandles,
                     npc,
                     state.element as? Npc,
+                    requests.map { it.context.transform },
+                    requests.map { it.context.partId },
+                    SceneRenderTransform(state.element.transform, null),
                 )
             if (retainUntilClaimed) published = active
             future.complete(active)

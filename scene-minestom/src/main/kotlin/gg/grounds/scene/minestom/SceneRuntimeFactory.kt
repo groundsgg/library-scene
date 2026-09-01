@@ -8,9 +8,9 @@ import java.util.concurrent.CompletionStage
 
 object SceneRuntimeFactory {
     fun create(request: SceneRuntimeRequest): CompletionStage<SceneRuntimeCreationResult> {
-        val problems =
+        val readiness =
             try {
-                SceneReadiness.check(
+                SceneReadiness.prepare(
                     SceneReadinessRequest(
                         scene = request.scene,
                         assets = request.assets,
@@ -18,6 +18,7 @@ object SceneRuntimeFactory {
                         renderers = request.renderers,
                         effects = request.effects,
                         actionRegistry = request.actionRegistry,
+                        identity = request.identity,
                         config = request.config,
                     )
                 )
@@ -35,11 +36,13 @@ object SceneRuntimeFactory {
                     )
                 )
             }
-        if (problems.isNotEmpty()) {
-            return CompletableFuture.completedFuture(SceneRuntimeCreationResult.Failure(problems))
+        if (readiness.problems.isNotEmpty()) {
+            return CompletableFuture.completedFuture(
+                SceneRuntimeCreationResult.Failure(readiness.problems)
+            )
         }
         return try {
-            DefaultSceneRuntime.create(request)
+            DefaultSceneRuntime.create(request, checkNotNull(readiness.capabilities))
         } catch (_: Throwable) {
             CompletableFuture.completedFuture(
                 SceneRuntimeCreationResult.Failure(

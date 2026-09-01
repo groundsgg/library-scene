@@ -3,6 +3,7 @@ package gg.grounds.scene.minestom.internal.trigger
 import gg.grounds.scene.format.LocalId
 import gg.grounds.scene.format.TriggerBinding
 import gg.grounds.scene.minestom.ScenePlayerPolicy
+import gg.grounds.scene.minestom.internal.millisToNanosSaturated
 import net.minestom.server.entity.Player
 import net.minestom.server.instance.Instance
 
@@ -37,7 +38,7 @@ internal class TriggerEngine(
                 stateStore.isCoolingDown(
                     key,
                     normalizedInput.acceptedNanos,
-                    binding.cooldownMillis * NANOS_PER_MILLI,
+                    millisToNanosSaturated(binding.cooldownMillis),
                 )
             ) {
                 return@mapIndexedNotNull null
@@ -46,7 +47,7 @@ internal class TriggerEngine(
                 .tryAccept(
                     key,
                     normalizedInput.acceptedNanos,
-                    binding.debounceMillis * NANOS_PER_MILLI,
+                    millisToNanosSaturated(binding.debounceMillis),
                 )
                 ?.let { PendingActionChain(key, it, normalizedInput, binding.actions) }
         }
@@ -65,8 +66,4 @@ internal class TriggerEngine(
         policy.isEligible(player)
 
     private val policy: ScenePlayerPolicy = playerPolicy
-
-    private companion object {
-        const val NANOS_PER_MILLI = 1_000_000L
-    }
 }

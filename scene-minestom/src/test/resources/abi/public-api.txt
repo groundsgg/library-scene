@@ -1,3 +1,4 @@
+CLASS gg.grounds.scene.minestom.JavaRenderedAssetHandle:java.lang.Object interfaces=gg.grounds.scene.minestom.RenderedAssetHandle
 CLASS gg.grounds.scene.minestom.JavaSceneActionRegistry:java.lang.Object interfaces=gg.grounds.scene.minestom.SceneActionRegistry
 CLASS gg.grounds.scene.minestom.JavaSceneAssetRendererRegistry:java.lang.Object interfaces=gg.grounds.scene.minestom.SceneAssetRendererRegistry
 CLASS gg.grounds.scene.minestom.JavaSceneEffectSink:java.lang.Object interfaces=gg.grounds.scene.minestom.SceneEffectSink
@@ -27,7 +28,10 @@ CLASS gg.grounds.scene.minestom.SceneRuntimeJava:java.lang.Object interfaces=
 CLASS gg.grounds.scene.minestom.SceneRuntimeProblem:java.lang.Object interfaces=
 CLASS gg.grounds.scene.minestom.SceneRuntimeProblemCode:java.lang.Enum<gg.grounds.scene.minestom.SceneRuntimeProblemCode> interfaces=
 CLASS gg.grounds.scene.minestom.SceneRuntimeRequest:java.lang.Object interfaces=
+CLASS gg.grounds.scene.minestom.SceneViewerHighlightTransition:java.lang.Object interfaces=
+CLASS gg.grounds.scene.minestom.SceneViewerScaleTransition:java.lang.Object interfaces=
 CLASS gg.grounds.scene.minestom.SceneViewerVisualState:java.lang.Object interfaces=
+CTOR gg.grounds.scene.minestom.JavaRenderedAssetHandle() throws=
 CTOR gg.grounds.scene.minestom.JavaSceneActionRegistry() throws=
 CTOR gg.grounds.scene.minestom.JavaSceneAssetRendererRegistry() throws=
 CTOR gg.grounds.scene.minestom.JavaSceneEffectSink() throws=
@@ -46,9 +50,11 @@ CTOR gg.grounds.scene.minestom.SceneRuntimeIdentity(java.lang.String,java.lang.S
 CTOR gg.grounds.scene.minestom.SceneRuntimeProblem(gg.grounds.scene.minestom.SceneRuntimeProblemCode,java.lang.String,java.lang.String,java.lang.String,kotlin.jvm.internal.DefaultConstructorMarker) throws=
 CTOR gg.grounds.scene.minestom.SceneRuntimeRequest(gg.grounds.scene.format.SceneDocument,gg.grounds.scene.format.AssetCatalog,gg.grounds.scene.format.ActionCatalog,gg.grounds.scene.minestom.SceneRuntimeIdentity,net.minestom.server.instance.Instance,gg.grounds.scene.minestom.SceneAssetRendererRegistry,gg.grounds.scene.minestom.SceneEffectSink,gg.grounds.scene.minestom.ScenePlayerPolicy,gg.grounds.scene.minestom.SceneActionRegistry,gg.grounds.scene.minestom.SceneClock,gg.grounds.scene.minestom.SceneRuntimeConfig) throws=
 CTOR gg.grounds.scene.minestom.SceneRuntimeRequest(gg.grounds.scene.format.SceneDocument,gg.grounds.scene.format.AssetCatalog,gg.grounds.scene.format.ActionCatalog,gg.grounds.scene.minestom.SceneRuntimeIdentity,net.minestom.server.instance.Instance,gg.grounds.scene.minestom.SceneAssetRendererRegistry,gg.grounds.scene.minestom.SceneEffectSink,gg.grounds.scene.minestom.ScenePlayerPolicy,gg.grounds.scene.minestom.SceneActionRegistry,gg.grounds.scene.minestom.SceneClock,gg.grounds.scene.minestom.SceneRuntimeConfig,int,kotlin.jvm.internal.DefaultConstructorMarker) throws=
+CTOR gg.grounds.scene.minestom.SceneViewerHighlightTransition(long,long,boolean,boolean,boolean) throws=
+CTOR gg.grounds.scene.minestom.SceneViewerScaleTransition(long,long,double,double,double) throws=
 CTOR gg.grounds.scene.minestom.SceneViewerVisualState() throws=
-CTOR gg.grounds.scene.minestom.SceneViewerVisualState(double,boolean) throws=
-CTOR gg.grounds.scene.minestom.SceneViewerVisualState(double,boolean,int,kotlin.jvm.internal.DefaultConstructorMarker) throws=
+CTOR gg.grounds.scene.minestom.SceneViewerVisualState(double,boolean,gg.grounds.scene.minestom.SceneViewerScaleTransition,gg.grounds.scene.minestom.SceneViewerHighlightTransition) throws=
+CTOR gg.grounds.scene.minestom.SceneViewerVisualState(double,boolean,gg.grounds.scene.minestom.SceneViewerScaleTransition,gg.grounds.scene.minestom.SceneViewerHighlightTransition,int,kotlin.jvm.internal.DefaultConstructorMarker) throws=
 FIELD gg.grounds.scene.minestom.SceneActionResult$Success.INSTANCE:gg.grounds.scene.minestom.SceneActionResult$Success
 FIELD gg.grounds.scene.minestom.SceneRuntimeFactory.INSTANCE:gg.grounds.scene.minestom.SceneRuntimeFactory
 FIELD gg.grounds.scene.minestom.SceneRuntimeJava.INSTANCE:gg.grounds.scene.minestom.SceneRuntimeJava
@@ -59,6 +65,10 @@ FIELD gg.grounds.scene.minestom.SceneRuntimeProblemCode.MISSING_ACTION_HANDLER:g
 FIELD gg.grounds.scene.minestom.SceneRuntimeProblemCode.MISSING_EFFECT:gg.grounds.scene.minestom.SceneRuntimeProblemCode
 FIELD gg.grounds.scene.minestom.SceneRuntimeProblemCode.MISSING_RENDERER:gg.grounds.scene.minestom.SceneRuntimeProblemCode
 FIELD gg.grounds.scene.minestom.SceneRuntimeProblemCode.RUNTIME_FAILURE:gg.grounds.scene.minestom.SceneRuntimeProblemCode
+METHOD gg.grounds.scene.minestom.JavaRenderedAssetHandle.startAnimation(java.lang.String,long):void throws=
+METHOD gg.grounds.scene.minestom.JavaRenderedAssetHandle.startAnimation-t1GmUmk(java.lang.String,long):void throws=
+METHOD gg.grounds.scene.minestom.JavaRenderedAssetHandle.stopAnimation(java.lang.String):void throws=
+METHOD gg.grounds.scene.minestom.JavaRenderedAssetHandle.stopAnimation-SCgMogU(java.lang.String):void throws=
 METHOD gg.grounds.scene.minestom.JavaSceneActionRegistry.handlerFor(java.lang.String):gg.grounds.scene.minestom.SceneActionHandler throws=
 METHOD gg.grounds.scene.minestom.JavaSceneActionRegistry.handlerFor-g3po4PQ(java.lang.String):gg.grounds.scene.minestom.SceneActionHandler throws=
 METHOD gg.grounds.scene.minestom.JavaSceneAssetRendererRegistry.rendererFor(java.lang.String,gg.grounds.scene.format.AssetKind):gg.grounds.scene.minestom.SceneAssetRendererFactory throws=
@@ -90,6 +100,7 @@ METHOD gg.grounds.scene.minestom.SceneActionContext.equals(java.lang.Object):boo
 METHOD gg.grounds.scene.minestom.SceneActionContext.getAcceptedNanos():long throws=
 METHOD gg.grounds.scene.minestom.SceneActionContext.getArguments():java.util.Map<gg.grounds.scene.format.LocalId, gg.grounds.scene.format.ApplicationArgument> throws=
 METHOD gg.grounds.scene.minestom.SceneActionContext.getElementId-52lPjcA():java.lang.String throws=
+METHOD gg.grounds.scene.minestom.SceneActionContext.getElementIdValue():java.lang.String throws=
 METHOD gg.grounds.scene.minestom.SceneActionContext.getHand():gg.grounds.scene.format.SceneHand throws=
 METHOD gg.grounds.scene.minestom.SceneActionContext.getIdentity():gg.grounds.scene.minestom.SceneRuntimeIdentity throws=
 METHOD gg.grounds.scene.minestom.SceneActionContext.getPlayer():net.minestom.server.entity.Player throws=
@@ -127,9 +138,12 @@ METHOD gg.grounds.scene.minestom.SceneAssetRenderContext.copy-SAJ8D1g$default(gg
 METHOD gg.grounds.scene.minestom.SceneAssetRenderContext.copy-SAJ8D1g(net.minestom.server.instance.Instance,java.lang.String,java.lang.String,java.lang.String,gg.grounds.scene.minestom.SceneRenderTransform):gg.grounds.scene.minestom.SceneAssetRenderContext throws=
 METHOD gg.grounds.scene.minestom.SceneAssetRenderContext.equals(java.lang.Object):boolean throws=
 METHOD gg.grounds.scene.minestom.SceneAssetRenderContext.getAsset-URjDaG4():java.lang.String throws=
+METHOD gg.grounds.scene.minestom.SceneAssetRenderContext.getAssetValue():java.lang.String throws=
 METHOD gg.grounds.scene.minestom.SceneAssetRenderContext.getElementId-52lPjcA():java.lang.String throws=
+METHOD gg.grounds.scene.minestom.SceneAssetRenderContext.getElementIdValue():java.lang.String throws=
 METHOD gg.grounds.scene.minestom.SceneAssetRenderContext.getInstance():net.minestom.server.instance.Instance throws=
 METHOD gg.grounds.scene.minestom.SceneAssetRenderContext.getPartId-oHF-QXw():java.lang.String throws=
+METHOD gg.grounds.scene.minestom.SceneAssetRenderContext.getPartIdValue():java.lang.String throws=
 METHOD gg.grounds.scene.minestom.SceneAssetRenderContext.getTransform():gg.grounds.scene.minestom.SceneRenderTransform throws=
 METHOD gg.grounds.scene.minestom.SceneAssetRenderContext.hashCode():int throws=
 METHOD gg.grounds.scene.minestom.SceneAssetRenderContext.toString():java.lang.String throws=
@@ -194,6 +208,7 @@ METHOD gg.grounds.scene.minestom.SceneRuntimeIdentity.equals(java.lang.Object):b
 METHOD gg.grounds.scene.minestom.SceneRuntimeIdentity.getMapId():java.lang.String throws=
 METHOD gg.grounds.scene.minestom.SceneRuntimeIdentity.getMapVersion():long throws=
 METHOD gg.grounds.scene.minestom.SceneRuntimeIdentity.getSceneId-Z_7YEIc():java.lang.String throws=
+METHOD gg.grounds.scene.minestom.SceneRuntimeIdentity.getSceneIdValue():java.lang.String throws=
 METHOD gg.grounds.scene.minestom.SceneRuntimeIdentity.hashCode():int throws=
 METHOD gg.grounds.scene.minestom.SceneRuntimeIdentity.toString():java.lang.String throws=
 METHOD gg.grounds.scene.minestom.SceneRuntimeJava.identity(java.lang.String,java.lang.String,long):gg.grounds.scene.minestom.SceneRuntimeIdentity throws=
@@ -206,6 +221,7 @@ METHOD gg.grounds.scene.minestom.SceneRuntimeProblem.copy-puSPbls(gg.grounds.sce
 METHOD gg.grounds.scene.minestom.SceneRuntimeProblem.equals(java.lang.Object):boolean throws=
 METHOD gg.grounds.scene.minestom.SceneRuntimeProblem.getCode():gg.grounds.scene.minestom.SceneRuntimeProblemCode throws=
 METHOD gg.grounds.scene.minestom.SceneRuntimeProblem.getElementId-oHF-QXw():java.lang.String throws=
+METHOD gg.grounds.scene.minestom.SceneRuntimeProblem.getElementIdValue():java.lang.String throws=
 METHOD gg.grounds.scene.minestom.SceneRuntimeProblem.getMessage():java.lang.String throws=
 METHOD gg.grounds.scene.minestom.SceneRuntimeProblem.getPath():java.lang.String throws=
 METHOD gg.grounds.scene.minestom.SceneRuntimeProblem.hashCode():int throws=
@@ -240,12 +256,46 @@ METHOD gg.grounds.scene.minestom.SceneRuntimeRequest.getRenderers():gg.grounds.s
 METHOD gg.grounds.scene.minestom.SceneRuntimeRequest.getScene():gg.grounds.scene.format.SceneDocument throws=
 METHOD gg.grounds.scene.minestom.SceneRuntimeRequest.hashCode():int throws=
 METHOD gg.grounds.scene.minestom.SceneRuntimeRequest.toString():java.lang.String throws=
+METHOD gg.grounds.scene.minestom.SceneViewerHighlightTransition.component1():long throws=
+METHOD gg.grounds.scene.minestom.SceneViewerHighlightTransition.component2():long throws=
+METHOD gg.grounds.scene.minestom.SceneViewerHighlightTransition.component3():boolean throws=
+METHOD gg.grounds.scene.minestom.SceneViewerHighlightTransition.component4():boolean throws=
+METHOD gg.grounds.scene.minestom.SceneViewerHighlightTransition.component5():boolean throws=
+METHOD gg.grounds.scene.minestom.SceneViewerHighlightTransition.copy$default(gg.grounds.scene.minestom.SceneViewerHighlightTransition,long,long,boolean,boolean,boolean,int,java.lang.Object):gg.grounds.scene.minestom.SceneViewerHighlightTransition throws=
+METHOD gg.grounds.scene.minestom.SceneViewerHighlightTransition.copy(long,long,boolean,boolean,boolean):gg.grounds.scene.minestom.SceneViewerHighlightTransition throws=
+METHOD gg.grounds.scene.minestom.SceneViewerHighlightTransition.equals(java.lang.Object):boolean throws=
+METHOD gg.grounds.scene.minestom.SceneViewerHighlightTransition.getCurrent():boolean throws=
+METHOD gg.grounds.scene.minestom.SceneViewerHighlightTransition.getDurationNanos():long throws=
+METHOD gg.grounds.scene.minestom.SceneViewerHighlightTransition.getStart():boolean throws=
+METHOD gg.grounds.scene.minestom.SceneViewerHighlightTransition.getStartedNanos():long throws=
+METHOD gg.grounds.scene.minestom.SceneViewerHighlightTransition.getTarget():boolean throws=
+METHOD gg.grounds.scene.minestom.SceneViewerHighlightTransition.hashCode():int throws=
+METHOD gg.grounds.scene.minestom.SceneViewerHighlightTransition.toString():java.lang.String throws=
+METHOD gg.grounds.scene.minestom.SceneViewerScaleTransition.component1():long throws=
+METHOD gg.grounds.scene.minestom.SceneViewerScaleTransition.component2():long throws=
+METHOD gg.grounds.scene.minestom.SceneViewerScaleTransition.component3():double throws=
+METHOD gg.grounds.scene.minestom.SceneViewerScaleTransition.component4():double throws=
+METHOD gg.grounds.scene.minestom.SceneViewerScaleTransition.component5():double throws=
+METHOD gg.grounds.scene.minestom.SceneViewerScaleTransition.copy$default(gg.grounds.scene.minestom.SceneViewerScaleTransition,long,long,double,double,double,int,java.lang.Object):gg.grounds.scene.minestom.SceneViewerScaleTransition throws=
+METHOD gg.grounds.scene.minestom.SceneViewerScaleTransition.copy(long,long,double,double,double):gg.grounds.scene.minestom.SceneViewerScaleTransition throws=
+METHOD gg.grounds.scene.minestom.SceneViewerScaleTransition.equals(java.lang.Object):boolean throws=
+METHOD gg.grounds.scene.minestom.SceneViewerScaleTransition.getCurrent():double throws=
+METHOD gg.grounds.scene.minestom.SceneViewerScaleTransition.getDurationNanos():long throws=
+METHOD gg.grounds.scene.minestom.SceneViewerScaleTransition.getStart():double throws=
+METHOD gg.grounds.scene.minestom.SceneViewerScaleTransition.getStartedNanos():long throws=
+METHOD gg.grounds.scene.minestom.SceneViewerScaleTransition.getTarget():double throws=
+METHOD gg.grounds.scene.minestom.SceneViewerScaleTransition.hashCode():int throws=
+METHOD gg.grounds.scene.minestom.SceneViewerScaleTransition.toString():java.lang.String throws=
 METHOD gg.grounds.scene.minestom.SceneViewerVisualState.component1():double throws=
 METHOD gg.grounds.scene.minestom.SceneViewerVisualState.component2():boolean throws=
-METHOD gg.grounds.scene.minestom.SceneViewerVisualState.copy$default(gg.grounds.scene.minestom.SceneViewerVisualState,double,boolean,int,java.lang.Object):gg.grounds.scene.minestom.SceneViewerVisualState throws=
-METHOD gg.grounds.scene.minestom.SceneViewerVisualState.copy(double,boolean):gg.grounds.scene.minestom.SceneViewerVisualState throws=
+METHOD gg.grounds.scene.minestom.SceneViewerVisualState.component3():gg.grounds.scene.minestom.SceneViewerScaleTransition throws=
+METHOD gg.grounds.scene.minestom.SceneViewerVisualState.component4():gg.grounds.scene.minestom.SceneViewerHighlightTransition throws=
+METHOD gg.grounds.scene.minestom.SceneViewerVisualState.copy$default(gg.grounds.scene.minestom.SceneViewerVisualState,double,boolean,gg.grounds.scene.minestom.SceneViewerScaleTransition,gg.grounds.scene.minestom.SceneViewerHighlightTransition,int,java.lang.Object):gg.grounds.scene.minestom.SceneViewerVisualState throws=
+METHOD gg.grounds.scene.minestom.SceneViewerVisualState.copy(double,boolean,gg.grounds.scene.minestom.SceneViewerScaleTransition,gg.grounds.scene.minestom.SceneViewerHighlightTransition):gg.grounds.scene.minestom.SceneViewerVisualState throws=
 METHOD gg.grounds.scene.minestom.SceneViewerVisualState.equals(java.lang.Object):boolean throws=
+METHOD gg.grounds.scene.minestom.SceneViewerVisualState.getHighlightTransition():gg.grounds.scene.minestom.SceneViewerHighlightTransition throws=
 METHOD gg.grounds.scene.minestom.SceneViewerVisualState.getHighlighted():boolean throws=
 METHOD gg.grounds.scene.minestom.SceneViewerVisualState.getScaleMultiplier():double throws=
+METHOD gg.grounds.scene.minestom.SceneViewerVisualState.getScaleTransition():gg.grounds.scene.minestom.SceneViewerScaleTransition throws=
 METHOD gg.grounds.scene.minestom.SceneViewerVisualState.hashCode():int throws=
 METHOD gg.grounds.scene.minestom.SceneViewerVisualState.toString():java.lang.String throws=

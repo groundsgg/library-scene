@@ -3,6 +3,7 @@ package gg.grounds.scene.minestom.internal
 import gg.grounds.scene.format.*
 import gg.grounds.scene.minestom.*
 import gg.grounds.scene.minestom.internal.action.ChainOutcome
+import gg.grounds.scene.minestom.internal.action.SceneActionDiagnostic
 import gg.grounds.scene.minestom.internal.action.SceneActionExecutor
 import gg.grounds.scene.minestom.internal.runtime.ActiveElement
 import gg.grounds.scene.minestom.internal.runtime.ElementActivation
@@ -29,8 +30,11 @@ import net.minestom.server.timer.Task
 import net.minestom.server.timer.TaskSchedule
 import org.slf4j.LoggerFactory
 
-internal class DefaultSceneRuntime private constructor(private val request: SceneRuntimeRequest) :
-    SceneRuntime {
+internal class DefaultSceneRuntime
+private constructor(
+    private val request: SceneRuntimeRequest,
+    private val capabilities: SceneRuntimeCapabilities,
+) : SceneRuntime {
     override val identity: SceneRuntimeIdentity = request.identity
 
     @Volatile private var closed = false
@@ -49,8 +53,8 @@ internal class DefaultSceneRuntime private constructor(private val request: Scen
     private val activeElements = linkedMapOf<LocalId, ActiveElement>()
     private val pendingActivations = linkedMapOf<LocalId, ElementActivation>()
     private val chainOwners = mutableMapOf<ChainId, ChainOwner>()
-    private val viewers = ViewerStateStore()
-    private val sensors = NpcSensorEngine(request.playerPolicy)
+    private val viewers = ViewerStateStore(request.clock)
+    private val sensors = NpcSensorEngine(request.playerPolicy, cellEdge = request.config.cellEdge)
     private val look = LookController(request.clock, request.playerPolicy)
     private val spatial: ActivationController
     private val activator: ElementActivator
@@ -84,7 +88,13 @@ internal class DefaultSceneRuntime private constructor(private val request: Scen
                 request.config.cellEdge,
             )
         spatial = ActivationController(index, request.config, request.clock)
-        activator = ElementActivator(request.instance, request.renderers, request.clock, ::marshal)
+        activator =
+            ElementActivator(
+                request.instance,
+                capabilities.rendererFactories,
+                request.clock,
+                ::marshal,
+            )
         triggerEngine =
             TriggerEngine(
                 request.instance,
@@ -102,9 +112,11 @@ internal class DefaultSceneRuntime private constructor(private val request: Scen
                 activeElements,
                 viewers,
                 request.effects,
-                request.actionRegistry,
+                capabilities.actionHandlers,
                 ::isCurrent,
                 ::marshal,
+                clock = request.clock,
+                reportDiagnostic = ::reportActionDiagnostic,
             )
         events =
             MinestomSceneEvents(
@@ -148,22 +160,28 @@ internal class DefaultSceneRuntime private constructor(private val request: Scen
         val generation = state.generation
         val activation = activator.beginActivation(state)
         val stage = activation.stage
-        stage.whenComplete { active, error ->
-            scheduleContinuation {
-                if (
-                    error != null ||
-                        active == null ||
-                        state.generation != generation ||
-                        !activation.claim(active)
-                ) {
-                    val cleanupFailure = activation.abort()
-                    failInstallation(elementId, error?.unwrap() ?: cleanupFailure)
-                } else {
-                    activeElements[elementId] = active
-                    spatial.markActive(elementId)
-                    activatePrepared(always, index + 1)
+        try {
+            stage.whenComplete { active, error ->
+                scheduleContinuation {
+                    if (
+                        error != null ||
+                            active == null ||
+                            state.generation != generation ||
+                            !activation.claim(active)
+                    ) {
+                        val cleanupFailure = activation.abort()
+                        failInstallation(elementId, error?.unwrap() ?: cleanupFailure)
+                    } else {
+                        activeElements[elementId] = active
+                        sensors.activate(active)
+                        spatial.markActive(elementId)
+                        activatePrepared(always, index + 1)
+                    }
                 }
             }
+        } catch (error: Throwable) {
+            activation.abort()
+            failInstallation(elementId, error)
         }
     }
 
@@ -235,12 +253,15 @@ internal class DefaultSceneRuntime private constructor(private val request: Scen
             }
         val active = activeElements.values.sortedBy { it.elementId.value }
         advanceAnimations(active)
+        viewers.applyTransitions(request.instance, activeElements) { key, error ->
+            logFailure("VIEWER_TRANSITION_FAILED", key.elementId, player(key.playerId), error)
+        }
         look.update(eligible, active) { element, error ->
             logFailure("LOOK_UPDATE_FAILED", element.elementId, null, error)
         }
         eligible.forEach { player ->
             try {
-                sensors.update(listOf(player), active).forEach { transition ->
+                sensors.update(listOf(player)).forEach { transition ->
                     acceptTrigger(
                         SceneTriggerInput(
                             transition.playerId,
@@ -257,7 +278,9 @@ internal class DefaultSceneRuntime private constructor(private val request: Scen
         }
         if (tickIndex++ % request.config.spatialIntervalTicks == 0L) {
             try {
-                spatial.reevaluate(eligible.map(Player::getPosition))
+                spatial
+                    .reevaluate(eligible.map(Player::getPosition))
+                    .forEach(::abortPendingActivation)
             } catch (error: Throwable) {
                 logFailure("SPATIAL_EVALUATION_FAILED", null, null, error)
             }
@@ -268,9 +291,9 @@ internal class DefaultSceneRuntime private constructor(private val request: Scen
     private fun advanceAnimations(active: List<ActiveElement>) {
         active.forEach { element ->
             val state = logicalStates[element.elementId] ?: return@forEach
-            val started = state.animation.startedNanos ?: return@forEach
-            val elapsedMillis = (request.clock.nanoTime() - started).coerceAtLeast(0) / 1_000_000
-            element.handles.forEach { handle ->
+            element.handleEntries().forEach handleLoop@{ (partId, handle) ->
+                val started = state.animationFor(partId).startedNanos ?: return@handleLoop
+                val elapsedMillis = elapsedNanos(request.clock.nanoTime(), started) / 1_000_000
                 try {
                     handle.advanceAnimation(elapsedMillis)
                 } catch (error: Throwable) {
@@ -296,37 +319,91 @@ internal class DefaultSceneRuntime private constructor(private val request: Scen
         if (elementId in activeElements || elementId in pendingActivations || closed) return
         val state = logicalStates[elementId] ?: return
         val generation = state.generation
+        spatial.markActivating(elementId)
         val activation = activator.beginActivation(state)
         val stage = activation.stage
         pendingActivations[elementId] = activation
-        stage.whenComplete { active, error ->
-            scheduleContinuation {
-                pendingActivations.remove(elementId, activation)
-                if (closed || state.generation != generation) {
-                    activation.abort()
-                } else if (error != null || active == null) {
-                    spatial.markFailed(elementId)
-                    logFailure("ACTIVATION_FAILED", elementId, null, error?.unwrap())
-                } else if (!activation.claim(active)) {
-                    spatial.markFailed(elementId)
-                } else {
-                    activeElements[elementId] = active
-                    spatial.markActive(elementId)
-                    viewers.keysForElement(elementId).forEach {
-                        viewers.apply(request.instance, active, it)
+        try {
+            stage.whenComplete { active, error ->
+                scheduleContinuation {
+                    pendingActivations.remove(elementId, activation)
+                    if (closed || state.generation != generation) {
+                        activation.abort()
+                    } else if (!isActivationEligible(state.element)) {
+                        state.generation++
+                        activation.abort()
+                        spatial.markInactive(elementId)
+                    } else if (error != null || active == null) {
+                        spatial.markFailed(elementId)
+                        logFailure("ACTIVATION_FAILED", elementId, null, error?.unwrap())
+                    } else {
+                        try {
+                            viewers.keysForElement(elementId).forEach {
+                                viewers.apply(request.instance, active, it)
+                            }
+                            if (!activation.claim(active)) {
+                                spatial.markFailed(elementId)
+                            } else {
+                                activeElements[elementId] = active
+                                sensors.activate(active)
+                                spatial.markActive(elementId)
+                            }
+                        } catch (applyFailure: Throwable) {
+                            activation.abort()
+                            spatial.markFailed(elementId)
+                            logFailure("VIEWER_REAPPLY_FAILED", elementId, null, applyFailure)
+                        }
                     }
                 }
             }
+        } catch (error: Throwable) {
+            pendingActivations.remove(elementId, activation)
+            activation.abort()
+            spatial.markFailed(elementId)
+            logFailure("ACTIVATION_CALLBACK_REGISTRATION_FAILED", elementId, null, error)
         }
     }
 
     private fun deactivate(elementId: LocalId) {
         val state = logicalStates[elementId] ?: return
         state.generation++
+        pendingActivations.remove(elementId)?.let { activation ->
+            activation.abort()?.let { error ->
+                logFailure("ACTIVATION_ABORT_FAILED", elementId, null, error)
+            }
+        }
         invalidateElementChains(elementId)
         look.removeElement(elementId)
+        sensors.deactivate(elementId)
         activeElements.remove(elementId)?.let(activator::deactivate)
         spatial.markInactive(elementId)
+    }
+
+    private fun abortPendingActivation(elementId: LocalId) {
+        if (elementId !in pendingActivations) return
+        deactivate(elementId)
+    }
+
+    private fun isActivationEligible(
+        element: SceneElement,
+        excludedPlayerId: java.util.UUID? = null,
+    ): Boolean {
+        if (element.activation == ActivationPolicy.ALWAYS) return true
+        val radiusSquared = request.config.activationDistance * request.config.activationDistance
+        return request.instance.players.any { player ->
+            if (player.uuid == excludedPlayerId) return@any false
+            val eligible =
+                try {
+                    request.playerPolicy.isEligible(player)
+                } catch (error: Throwable) {
+                    logFailure("PLAYER_POLICY_FAILED", element.id, player, error)
+                    false
+                }
+            if (!eligible) return@any false
+            val dx = player.position.x() - element.transform.position.x
+            val dz = player.position.z() - element.transform.position.z
+            dx * dx + dz * dz <= radiusSquared
+        }
     }
 
     private fun acceptTrigger(input: SceneTriggerInput) {
@@ -376,15 +453,43 @@ internal class DefaultSceneRuntime private constructor(private val request: Scen
     }
 
     private fun removePlayerState(player: Player) {
+        try {
+            pendingActivations.keys.toList().forEach { elementId ->
+                val element = logicalStates[elementId]?.element ?: return@forEach
+                if (!isActivationEligible(element, player.uuid)) abortPendingActivation(elementId)
+            }
+        } catch (error: Throwable) {
+            logFailure("PENDING_ACTIVATION_INVALIDATION_FAILED", null, player, error)
+        }
         viewers.keysForPlayer(player.uuid).forEach { key ->
             activeElements[key.elementId]?.let { active ->
-                viewers.clear(request.instance, active, key)
+                try {
+                    viewers.clear(request.instance, active, key)
+                } catch (error: Throwable) {
+                    logFailure("VIEWER_CLEANUP_FAILED", key.elementId, player, error)
+                }
             }
         }
-        viewers.removePlayer(player.uuid)
-        sensors.removePlayer(player.uuid)
-        triggerEngine.invalidatePlayer(player.uuid)
-        chainOwners.keys.removeIf { it.key.playerId == player.uuid }
+        try {
+            viewers.removePlayer(player.uuid)
+        } catch (error: Throwable) {
+            logFailure("VIEWER_STATE_REMOVE_FAILED", null, player, error)
+        }
+        try {
+            sensors.removePlayer(player.uuid)
+        } catch (error: Throwable) {
+            logFailure("SENSOR_STATE_REMOVE_FAILED", null, player, error)
+        }
+        try {
+            triggerEngine.invalidatePlayer(player.uuid)
+        } catch (error: Throwable) {
+            logFailure("TRIGGER_STATE_REMOVE_FAILED", null, player, error)
+        }
+        try {
+            chainOwners.keys.removeIf { it.key.playerId == player.uuid }
+        } catch (error: Throwable) {
+            logFailure("CHAIN_STATE_REMOVE_FAILED", null, player, error)
+        }
     }
 
     private fun invalidateElementChains(elementId: LocalId) {
@@ -476,10 +581,33 @@ internal class DefaultSceneRuntime private constructor(private val request: Scen
 
     private fun scheduleContinuation(action: () -> Unit) {
         try {
-            marshal(Runnable(action))
+            marshal(
+                Runnable {
+                    try {
+                        action()
+                    } catch (error: Throwable) {
+                        logFailure("CONTINUATION_CALLBACK_FAILED", null, null, error)
+                    }
+                }
+            )
         } catch (error: Throwable) {
             logFailure("CONTINUATION_SCHEDULE_FAILED", null, null, error)
         }
+    }
+
+    private fun reportActionDiagnostic(diagnostic: SceneActionDiagnostic) {
+        LOGGER.error(
+            "Scene action diagnostic code={} outcome={} scene={} element={} player={} trigger={} binding={} diagnostic={}",
+            diagnostic.code,
+            diagnostic.outcome,
+            identity.sceneId.value,
+            diagnostic.elementId.value,
+            diagnostic.playerId,
+            diagnostic.trigger,
+            diagnostic.bindingIndex,
+            diagnostic.diagnostic,
+            diagnostic.cause,
+        )
     }
 
     private fun runtimeProblem(message: String) =
@@ -503,8 +631,11 @@ internal class DefaultSceneRuntime private constructor(private val request: Scen
     companion object {
         private val LOGGER = LoggerFactory.getLogger(DefaultSceneRuntime::class.java)
 
-        fun create(request: SceneRuntimeRequest): CompletionStage<SceneRuntimeCreationResult> =
-            DefaultSceneRuntime(request).start()
+        fun create(
+            request: SceneRuntimeRequest,
+            capabilities: SceneRuntimeCapabilities,
+        ): CompletionStage<SceneRuntimeCreationResult> =
+            DefaultSceneRuntime(request, capabilities).start()
     }
 }
 
