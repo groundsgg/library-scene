@@ -1,9 +1,13 @@
 # scene-minestom Runtime Design
 
-**Status:** PROPOSED — approved in conversation, awaiting review of this written specification  
-**Parent:** [Scene, NPC & Resource Pack Platform — Concept and Master Plan](https://grounds.atlassian.net/wiki/spaces/GARCHITECT/pages/257622018)  
-**Target repository:** [groundsgg/library-scene](https://github.com/groundsgg/library-scene)  
-**Target artifact:** `gg.grounds:scene-minestom`  
+**Status:** APPROVED FOR IMPLEMENTATION PLANNING
+
+**Parent:** [Scene, NPC & Resource Pack Platform — Concept and Master Plan](https://grounds.atlassian.net/wiki/spaces/GARCHITECT/pages/257622018)
+
+**Target repository:** [groundsgg/library-scene](https://github.com/groundsgg/library-scene)
+
+**Target artifact:** `gg.grounds:scene-minestom`
+
 **Runtime baseline:** Kotlin/JVM 25 and the Grounds Minestom dependency baseline
 
 ## Outcome
@@ -106,7 +110,7 @@ There is no fallback based on key spelling or resource-pack path.
 A factory activates one asset in an Instance and returns a `RenderedAssetHandle`. The handle owns
 all concrete visual entities for that asset and supports:
 
-* applying its current world transform;
+* applying its current root/local render-transform stack;
 * applying or clearing per-viewer scale and highlight state;
 * starting, stopping, and advancing a catalog-approved animation from a supplied logical elapsed
   time;
@@ -175,9 +179,12 @@ animation becomes its initial logical animation state.
 
 ### Composite Props
 
-An active Composite Prop owns one renderer handle per part. The runtime combines the root world
-transform and part local transform using the Scene v1 order `yaw → pitch → roll`, including
-non-uniform scale. Parts are activated and closed atomically with their root.
+An active Composite Prop owns one renderer handle per part. The runtime preserves the root world
+transform and part local transform as an ordered render-transform stack using the Scene v1 order
+`yaw → pitch → roll`, including non-uniform scale. It does not prematurely collapse a rotated,
+non-uniform stack into position/rotation/scale and thereby lose shear. Bounds and spatial queries
+use the equivalent internal affine matrix. Parts are activated and closed atomically with their
+root.
 
 ### NPCs
 
@@ -355,4 +362,3 @@ the separate `minestom-lobby` vertical integration open.
 * Per-tick work excludes distant inactive elements.
 * `scene-format` and Scene JSON remain unchanged.
 * `scene-minestom` contains no Grounds application, service, resource-pack, or Paper dependency.
-
