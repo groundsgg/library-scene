@@ -5,11 +5,11 @@ import gg.grounds.scene.format.SceneTrigger
 import gg.grounds.scene.format.Vec3
 import gg.grounds.scene.minestom.ScenePlayerPolicy
 import gg.grounds.scene.minestom.internal.runtime.ActiveElement
-import java.util.TreeMap
 import java.util.UUID
-import kotlin.math.floor
-import kotlin.math.max
+import kotlin.math.abs
+import net.minestom.server.coordinate.Vec
 import net.minestom.server.entity.Player
+import net.minestom.server.instance.Instance
 
 internal data class SensorTransition(
     val playerId: UUID,
@@ -18,42 +18,48 @@ internal data class SensorTransition(
 )
 
 internal class NpcSensorEngine(
+    private val instance: Instance,
     private val playerPolicy: ScenePlayerPolicy,
     private val interactionReach: Double = 5.0,
     private val raycaster: BoundsRaycaster = BoundsRaycaster(),
-    private val cellEdge: Double = 32.0,
+    private val queries: MinestomSensorQueries = MinestomSensorQueries(instance, interactionReach),
 ) {
     private val hovered = mutableMapOf<UUID, LocalId>()
     private val nearby = mutableSetOf<ViewerElementKey>()
     private val active = mutableMapOf<LocalId, ActiveElement>()
-    private val cells = mutableMapOf<SensorCellKey, MutableMap<LocalId, ActiveElement>>()
-    private var maximumRadius = interactionReach
+    private val interactions = mutableMapOf<UUID, ActiveElement>()
+    private val oversizedHover = mutableMapOf<LocalId, ActiveElement>()
     private var lastVisited = 0
 
     fun activate(element: ActiveElement) {
         val npc = element.npc ?: return
         deactivate(element.elementId)
         active[element.elementId] = element
-        cells
-            .getOrPut(cellFor(npc.transform.position.x, npc.transform.position.z)) {
-                TreeMap(compareBy(LocalId::value))
-            }[element.elementId] = element
-        maximumRadius = max(maximumRadius, npc.proximity?.exitRadius ?: 0.0)
+        if (npc.visible) element.npcEntities?.interaction?.let { interactions[it.uuid] = element }
+        refresh(element)
     }
 
     fun deactivate(elementId: LocalId) {
         val removed = active.remove(elementId) ?: return
-        val npc = removed.npc ?: return
-        cells[cellFor(npc.transform.position.x, npc.transform.position.z)]?.let { cell ->
-            cell.remove(elementId)
-            if (cell.isEmpty())
-                cells.remove(cellFor(npc.transform.position.x, npc.transform.position.z))
-        }
+        removed.npcEntities?.interaction?.uuid?.let(interactions::remove)
+        oversizedHover.remove(elementId)
         hovered.entries.removeIf { it.value == elementId }
-        maximumRadius =
-            active.values
-                .maxOfOrNull { it.npc?.proximity?.exitRadius ?: interactionReach }
-                ?.coerceAtLeast(interactionReach) ?: interactionReach
+    }
+
+    fun refresh(element: ActiveElement) {
+        val npc = element.npc ?: return
+        if (!npc.visible || element.npcEntities?.interaction == null) return
+        val position = element.npcEntities.interaction.position
+        val bounds = element.currentBounds()
+        val extent =
+            maxOf(
+                abs(bounds.min.x - position.x()),
+                abs(bounds.max.x - position.x()),
+                abs(bounds.min.z - position.z()),
+                abs(bounds.max.z - position.z()),
+            )
+        if (extent > 16.0) oversizedHover[element.elementId] = element
+        else oversizedHover.remove(element.elementId)
     }
 
     fun update(players: List<Player>): List<SensorTransition> {
@@ -66,7 +72,7 @@ internal class NpcSensorEngine(
                     transitions += removePlayer(player.uuid)
                     return@forEach
                 }
-                val npcs = candidates(player, visited)
+                val npcs = hoverCandidates(player, visited)
                 val eye = player.eyePosition()
                 val direction = player.position.direction().let { Vec3(it.x(), it.y(), it.z()) }
                 val newHover =
@@ -92,42 +98,8 @@ internal class NpcSensorEngine(
                     if (newHover == null) hovered.remove(player.uuid)
                     else hovered[player.uuid] = newHover
                 }
-                npcs.forEach { (active, npc) ->
-                    val sensor = npc.proximity ?: return@forEach
-                    val key = ViewerElementKey(player.uuid, active.elementId)
-                    val position =
-                        active
-                            .transformOr(
-                                gg.grounds.scene.minestom.SceneRenderTransform(npc.transform, null)
-                            )
-                            .root
-                            .position
-                    val dx = player.position.x() - position.x
-                    val dz = player.position.z() - position.z
-                    val distanceSquared = dx * dx + dz * dz
-                    if (
-                        key !in nearby && distanceSquared <= sensor.enterRadius * sensor.enterRadius
-                    ) {
-                        nearby += key
-                        transitions +=
-                            SensorTransition(
-                                player.uuid,
-                                active.elementId,
-                                SceneTrigger.PROXIMITY_ENTER,
-                            )
-                    } else if (
-                        key in nearby && distanceSquared > sensor.exitRadius * sensor.exitRadius
-                    ) {
-                        nearby -= key
-                        transitions +=
-                            SensorTransition(
-                                player.uuid,
-                                active.elementId,
-                                SceneTrigger.PROXIMITY_LEAVE,
-                            )
-                    }
-                }
             }
+        transitions += reconcileProximity(players)
         lastVisited = visited.size
         return transitions.sortedWith(
             compareBy<SensorTransition>(
@@ -159,35 +131,93 @@ internal class NpcSensorEngine(
         hovered.clear()
         nearby.clear()
         active.clear()
-        cells.clear()
-        maximumRadius = interactionReach
+        interactions.clear()
+        oversizedHover.clear()
         lastVisited = 0
     }
 
     fun visitedNpcCount(): Int = lastVisited
 
-    private fun candidates(
+    private fun hoverCandidates(
         player: Player,
         visited: MutableSet<LocalId>,
     ): List<Pair<ActiveElement, gg.grounds.scene.format.Npc>> {
-        val minimum =
-            cellFor(player.position.x() - maximumRadius, player.position.z() - maximumRadius)
-        val maximum =
-            cellFor(player.position.x() + maximumRadius, player.position.z() + maximumRadius)
-        return buildList {
-            for (x in minimum.x..maximum.x) for (z in minimum.z..maximum.z) {
-                cells[SensorCellKey(x, z)].orEmpty().values.forEach { element ->
-                    visited += element.elementId
-                    element.npc?.let { add(element to it) }
-                }
-            }
+        val candidates = linkedMapOf<LocalId, ActiveElement>()
+        queries.hoverInteractions(player.eyePosition().asPoint()).forEach { entity ->
+            interactions[entity.uuid]?.let { candidates[it.elementId] = it }
         }
+        oversizedHover.forEach { (id, element) -> candidates[id] = element }
+        return candidates.values
+            .sortedBy { it.elementId.value }
+            .mapNotNull { element ->
+                visited += element.elementId
+                element.npc?.let { element to it }
+            }
     }
 
-    private fun cellFor(x: Double, z: Double) =
-        SensorCellKey(floor(x / cellEdge).toInt(), floor(z / cellEdge).toInt())
+    private fun reconcileProximity(players: List<Player>): List<SensorTransition> = buildList {
+        val connected = players.associateBy(Player::getUuid)
+        active.values
+            .sortedBy { it.elementId.value }
+            .forEach { element ->
+                val npc = element.npc ?: return@forEach
+                val sensor = npc.proximity ?: return@forEach
+                val point = element.currentTransform.root.position.asPoint()
+                val withinExit =
+                    queries.proximityPlayers(point, sensor.exitRadius).associateBy(Player::getUuid)
+                val relevantIds =
+                    (nearby.filter { it.elementId == element.elementId }.map { it.playerId } +
+                            withinExit.keys)
+                        .toSortedSet()
+                relevantIds.forEach { playerId ->
+                    val player = connected[playerId]
+                    val key = ViewerElementKey(playerId, element.elementId)
+                    val eligible = player != null && playerPolicy.isEligible(player)
+                    val candidate = withinExit[playerId]
+                    if (!eligible || candidate == null) {
+                        if (nearby.remove(key))
+                            add(
+                                SensorTransition(
+                                    playerId,
+                                    element.elementId,
+                                    SceneTrigger.PROXIMITY_LEAVE,
+                                )
+                            )
+                        return@forEach
+                    }
+                    val dx = candidate.position.x() - point.x
+                    val dz = candidate.position.z() - point.z
+                    val distanceSquared = dx * dx + dz * dz
+                    if (
+                        key !in nearby && distanceSquared <= sensor.enterRadius * sensor.enterRadius
+                    ) {
+                        nearby += key
+                        add(
+                            SensorTransition(
+                                playerId,
+                                element.elementId,
+                                SceneTrigger.PROXIMITY_ENTER,
+                            )
+                        )
+                    } else if (
+                        key in nearby && distanceSquared > sensor.exitRadius * sensor.exitRadius
+                    ) {
+                        nearby -= key
+                        add(
+                            SensorTransition(
+                                playerId,
+                                element.elementId,
+                                SceneTrigger.PROXIMITY_LEAVE,
+                            )
+                        )
+                    }
+                }
+            }
+    }
 
     private fun Player.eyePosition() = Vec3(position.x(), position.y() + eyeHeight, position.z())
+
+    private fun Vec3.asPoint() = Vec(x, y, z)
 
     private fun triggerOrder(trigger: SceneTrigger) =
         when (trigger) {
@@ -198,5 +228,3 @@ internal class NpcSensorEngine(
             else -> 4
         }
 }
-
-private data class SensorCellKey(val x: Int, val z: Int)

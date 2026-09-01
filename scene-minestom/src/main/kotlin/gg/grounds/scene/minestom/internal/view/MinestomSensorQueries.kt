@@ -1,0 +1,40 @@
+package gg.grounds.scene.minestom.internal.view
+
+import kotlin.math.ceil
+import net.minestom.server.coordinate.Point
+import net.minestom.server.entity.Entity
+import net.minestom.server.entity.Player
+import net.minestom.server.instance.EntityTracker
+import net.minestom.server.instance.Instance
+
+internal class MinestomSensorQueries(
+    private val instance: Instance,
+    private val interactionReach: Double = 5.0,
+    private val normalHoverExtent: Double = 16.0,
+) {
+    private val hoverChunkRange = ceil((interactionReach + normalHoverExtent) / 16.0).toInt()
+
+    fun hoverInteractions(eye: Point): List<Entity> =
+        buildList {
+                instance.getEntityTracker().nearbyEntitiesByChunkRange(
+                    eye,
+                    hoverChunkRange,
+                    EntityTracker.Target.ENTITIES,
+                ) { entity ->
+                    add(entity)
+                }
+            }
+            .sortedBy(Entity::getUuid)
+
+    fun proximityPlayers(point: Point, radius: Double): List<Player> =
+        buildList {
+                instance.getEntityTracker().nearbyEntities(
+                    point,
+                    radius,
+                    EntityTracker.Target.PLAYERS,
+                ) { player ->
+                    add(player)
+                }
+            }
+            .sortedBy(Player::getUuid)
+}

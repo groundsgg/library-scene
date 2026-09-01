@@ -38,12 +38,75 @@ import net.minestom.server.network.player.PlayerConnection
 
 class ViewerStateTest {
     @Test
+    fun `hover uses nearby Minestom Interaction chunks and exact ray ordering`() {
+        val instance = instance()
+        val sensor = NpcSensorEngine(instance, AlwaysEligible)
+        val player = player(PLAYER_ONE, Pos.ZERO)
+        val far = sensorActive(instance, npc("far", z = 3.0))
+        val near = sensorActive(instance, npc("near", z = 2.0))
+        sensor.activate(far)
+        sensor.activate(near)
+
+        assertEquals(
+            listOf(transition(PLAYER_ONE, "near", SceneTrigger.HOVER_ENTER)),
+            sensor.update(listOf(player)),
+        )
+    }
+
+    @Test
+    fun `large off-center current bounds remain hoverable through overflow candidates`() {
+        val instance = instance()
+        val sensor = NpcSensorEngine(instance, AlwaysEligible)
+        val player = player(PLAYER_ONE, Pos(32.0, 0.0, -3.0))
+        val npc = npc("wide", bounds = LocalBounds(Vec3(32.0, 1.62, 0.0), Vec3(2.0, 1.0, 1.0)))
+        sensor.activate(sensorActive(instance, npc))
+
+        assertEquals(
+            listOf(transition(PLAYER_ONE, "wide", SceneTrigger.HOVER_ENTER)),
+            sensor.update(listOf(player)),
+        )
+    }
+
+    @Test
+    fun `proximity queries Minestom players per npc and retains membership while inactive`() {
+        val instance = instance()
+        val sensor = NpcSensorEngine(instance, AlwaysEligible)
+        val player =
+            player(PLAYER_ONE, Pos(2.0, 0.0, 0.0)).also {
+                it.setInstance(instance, it.position).join()
+            }
+        val active = sensorActive(instance, npc("guide", proximity = ProximitySensor(3.0, 4.0)))
+        sensor.activate(active)
+
+        assertEquals(
+            listOf(transition(PLAYER_ONE, "guide", SceneTrigger.PROXIMITY_ENTER)),
+            sensor.update(listOf(player)),
+        )
+        sensor.deactivate(active.elementId)
+        assertEquals(emptyList(), sensor.update(listOf(player)))
+    }
+
+    @Test
+    fun `sensor candidate work excludes distant Interaction chunks`() {
+        val instance = instance()
+        val sensor = NpcSensorEngine(instance, AlwaysEligible)
+        val player = player(PLAYER_ONE, Pos.ZERO)
+        repeat(10) { sensor.activate(sensorActive(instance, npc("near$it", z = 2.0))) }
+        repeat(1_000) { sensor.activate(sensorActive(instance, npc("far$it", z = 10_000.0))) }
+
+        sensor.update(listOf(player))
+
+        assertEquals(10, sensor.visitedNpcCount())
+    }
+
+    @Test
     fun `overlapping bounds choose ray distance then local id`() {
+        val instance = instance()
         val player = player(PLAYER_ONE, Pos(0.0, 0.0, 0.0))
-        val farFirst = sensorActive(npc("a-far", z = 3.0))
-        val nearLast = sensorActive(npc("z-near", z = 2.0))
+        val farFirst = sensorActive(instance, npc("a-far", z = 3.0))
+        val nearLast = sensorActive(instance, npc("z-near", z = 2.0))
         val firstSensor =
-            sensor().also {
+            sensor(instance).also {
                 it.activate(farFirst)
                 it.activate(nearLast)
             }
@@ -53,10 +116,10 @@ class ViewerStateTest {
             firstSensor.update(listOf(player)),
         )
 
-        val b = sensorActive(npc("b", z = 2.0))
-        val a = sensorActive(npc("a", z = 2.0))
+        val b = sensorActive(instance, npc("b", z = 2.0))
+        val a = sensorActive(instance, npc("a", z = 2.0))
         val secondSensor =
-            sensor().also {
+            sensor(instance).also {
                 it.activate(b)
                 it.activate(a)
             }
@@ -68,9 +131,10 @@ class ViewerStateTest {
 
     @Test
     fun `hover emits enter once and leave when aim changes`() {
+        val instance = instance()
         val player = player(PLAYER_ONE, Pos(0.0, 0.0, 0.0))
-        val active = sensorActive(npc("guide", z = 2.0))
-        val sensor = sensor().also { it.activate(active) }
+        val active = sensorActive(instance, npc("guide", z = 2.0))
+        val sensor = sensor(instance).also { it.activate(active) }
 
         assertEquals(
             listOf(transition(PLAYER_ONE, "guide", SceneTrigger.HOVER_ENTER)),
@@ -87,10 +151,17 @@ class ViewerStateTest {
 
     @Test
     fun `proximity hysteresis survives inactive npc without duplicate enter`() {
-        val player = player(PLAYER_ONE, Pos(2.0, 0.0, 0.0))
+        val instance = instance()
+        val player =
+            player(PLAYER_ONE, Pos(2.0, 0.0, 0.0)).also {
+                it.setInstance(instance, it.position).join()
+            }
         val active =
-            sensorActive(npc("guide", proximity = ProximitySensor(3.0, 4.0), boundsY = 8.0))
-        val sensor = sensor().also { it.activate(active) }
+            sensorActive(
+                instance,
+                npc("guide", proximity = ProximitySensor(3.0, 4.0), boundsY = 8.0),
+            )
+        val sensor = sensor(instance).also { it.activate(active) }
 
         assertEquals(
             listOf(transition(PLAYER_ONE, "guide", SceneTrigger.PROXIMITY_ENTER)),
@@ -113,9 +184,14 @@ class ViewerStateTest {
 
     @Test
     fun `disconnect cleanup removes only that player's sensor and visual state`() {
-        val first = player(PLAYER_ONE, Pos(0.0, 0.0, 0.0))
-        val active = sensorActive(npc("guide", z = 2.0, proximity = ProximitySensor(3.0, 4.0)))
-        val sensor = sensor().also { it.activate(active) }
+        val instance = instance()
+        val first =
+            player(PLAYER_ONE, Pos(0.0, 0.0, 0.0)).also {
+                it.setInstance(instance, it.position).join()
+            }
+        val active =
+            sensorActive(instance, npc("guide", z = 2.0, proximity = ProximitySensor(3.0, 4.0)))
+        val sensor = sensor(instance).also { it.activate(active) }
         sensor.update(listOf(first))
 
         assertEquals(
@@ -144,10 +220,11 @@ class ViewerStateTest {
 
     @Test
     fun `sensor visits only active cells near each player`() {
+        val instance = instance()
         val player = player(PLAYER_ONE, Pos.ZERO)
-        val sensor = sensor()
-        repeat(10) { sensor.activate(sensorActive(npc("near$it", z = 2.0))) }
-        repeat(1_000) { sensor.activate(sensorActive(npc("far$it", z = 10_000.0))) }
+        val sensor = sensor(instance)
+        repeat(10) { sensor.activate(sensorActive(instance, npc("near$it", z = 2.0))) }
+        repeat(1_000) { sensor.activate(sensorActive(instance, npc("far$it", z = 10_000.0))) }
 
         sensor.update(listOf(player))
 
@@ -156,12 +233,15 @@ class ViewerStateTest {
 
     @Test
     fun `invisible npc emits proximity but can never hover`() {
-        val player = player(PLAYER_ONE, Pos.ZERO)
+        val instance = instance()
+        val player =
+            player(PLAYER_ONE, Pos.ZERO).also { it.setInstance(instance, it.position).join() }
         val invisible =
             sensorActive(
-                npc("hidden", z = 2.0, proximity = ProximitySensor(3.0, 4.0), visible = false)
+                instance,
+                npc("hidden", z = 2.0, proximity = ProximitySensor(3.0, 4.0), visible = false),
             )
-        val sensor = sensor().also { it.activate(invisible) }
+        val sensor = sensor(instance).also { it.activate(invisible) }
 
         assertEquals(
             listOf(transition(PLAYER_ONE, "hidden", SceneTrigger.PROXIMITY_ENTER)),
@@ -287,9 +367,24 @@ class ViewerStateTest {
         assertNull(raycaster.rayDistance(active, eye, direction, 5.0))
     }
 
-    private fun sensor() = NpcSensorEngine(AlwaysEligible)
+    private fun sensor(instance: net.minestom.server.instance.Instance) =
+        NpcSensorEngine(instance, AlwaysEligible)
 
-    private fun sensorActive(npc: Npc) = ActiveElement(npc.id, 1L, emptyList(), null, npc)
+    private fun sensorActive(
+        instance: net.minestom.server.instance.Instance,
+        npc: Npc,
+    ): ActiveElement {
+        val interaction = Entity(EntityType.INTERACTION)
+        interaction
+            .setInstance(instance, npc.transform.position.let { Pos(it.x, it.y, it.z) })
+            .join()
+        return ActiveElement(npc.id, 1L, emptyList(), NpcPlatformEntities(null, interaction), npc)
+    }
+
+    private fun instance() =
+        MinecraftServer.init().let {
+            MinecraftServer.getInstanceManager().createInstanceContainer()
+        }
 
     private fun lookActive(npc: Npc, handle: RecordingHandle) =
         ActiveElement(
@@ -308,6 +403,7 @@ class ViewerStateTest {
         look: LookBehavior = LookBehavior.Fixed,
         proximity: ProximitySensor? = null,
         visible: Boolean = true,
+        bounds: LocalBounds = LocalBounds(Vec3(0.0, boundsY, 0.0), Vec3(1.0, 1.0, 1.0)),
     ) =
         Npc(
             LocalId(id),
@@ -319,7 +415,7 @@ class ViewerStateTest {
             labelOffset = Vec3(0.0, 0.0, 0.0),
             look = look,
             initialAnimation = null,
-            interactionBounds = LocalBounds(Vec3(0.0, boundsY, 0.0), Vec3(1.0, 1.0, 1.0)),
+            interactionBounds = bounds,
             proximity = proximity,
             bindings = emptyList(),
         )

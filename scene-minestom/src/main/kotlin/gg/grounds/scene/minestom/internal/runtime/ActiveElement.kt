@@ -4,6 +4,7 @@ import gg.grounds.scene.format.LocalId
 import gg.grounds.scene.format.Npc
 import gg.grounds.scene.minestom.RenderedAssetHandle
 import gg.grounds.scene.minestom.SceneRenderTransform
+import gg.grounds.scene.minestom.internal.geometry.WorldBounds
 import gg.grounds.scene.minestom.internal.geometry.affine
 import gg.grounds.scene.minestom.internal.geometry.transformed
 import kotlin.math.max
@@ -31,6 +32,10 @@ internal class ActiveElement(
 
     fun transformOr(authored: SceneRenderTransform): SceneRenderTransform =
         runtimeTransform ?: authored
+
+    fun currentBounds(): WorldBounds =
+        npc?.interactionBounds?.transformed(currentTransform.affine())
+            ?: error("Only NPC elements have interaction bounds.")
 
     fun handlesFor(partId: LocalId?): List<RenderedAssetHandle> =
         if (partId == null) handles

@@ -54,7 +54,7 @@ private constructor(
     private val pendingActivations = linkedMapOf<LocalId, ElementActivation>()
     private val chainOwners = mutableMapOf<ChainId, ChainOwner>()
     private val viewers = ViewerStateStore(request.clock)
-    private val sensors = NpcSensorEngine(request.playerPolicy, cellEdge = request.config.cellEdge)
+    private val sensors = NpcSensorEngine(request.instance, request.playerPolicy)
     private val look = LookController(request.clock, request.playerPolicy)
     private val spatial: ActivationController
     private val activator: ElementActivator
@@ -259,22 +259,21 @@ private constructor(
         look.update(eligible, active) { element, error ->
             logFailure("LOOK_UPDATE_FAILED", element.elementId, null, error)
         }
-        eligible.forEach { player ->
-            try {
-                sensors.update(listOf(player)).forEach { transition ->
-                    acceptTrigger(
-                        SceneTriggerInput(
-                            transition.playerId,
-                            transition.elementId,
-                            transition.trigger,
-                            null,
-                            request.clock.nanoTime(),
-                        )
+        active.forEach(sensors::refresh)
+        try {
+            sensors.update(eligible).forEach { transition ->
+                acceptTrigger(
+                    SceneTriggerInput(
+                        transition.playerId,
+                        transition.elementId,
+                        transition.trigger,
+                        null,
+                        request.clock.nanoTime(),
                     )
-                }
-            } catch (error: Throwable) {
-                logFailure("SENSOR_UPDATE_FAILED", null, player, error)
+                )
             }
+        } catch (error: Throwable) {
+            logFailure("SENSOR_UPDATE_FAILED", null, null, error)
         }
         if (tickIndex++ % request.config.spatialIntervalTicks == 0L) {
             try {
