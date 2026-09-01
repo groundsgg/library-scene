@@ -12,7 +12,28 @@ internal data class ActiveElement(
     val npc: Npc? = null,
 ) : AutoCloseable {
     override fun close() {
-        npcEntities?.close()
-        handles.asReversed().forEach(RenderedAssetHandle::close)
+        closeOwnedResources(npcEntities, handles)?.let { throw it }
     }
+}
+
+internal fun closeOwnedResources(
+    npcEntities: NpcPlatformEntities?,
+    handles: List<RenderedAssetHandle>,
+    primaryFailure: Throwable? = null,
+): Throwable? {
+    var failure = primaryFailure
+
+    fun attempt(action: () -> Unit) {
+        try {
+            action()
+        } catch (error: Throwable) {
+            val current = failure
+            if (current == null) failure = error
+            else if (error !== current) current.addSuppressed(error)
+        }
+    }
+
+    npcEntities?.let { attempt(it::close) }
+    handles.asReversed().forEach { handle -> attempt(handle::close) }
+    return failure
 }

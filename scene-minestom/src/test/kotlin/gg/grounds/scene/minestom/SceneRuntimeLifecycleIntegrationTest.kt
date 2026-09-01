@@ -29,6 +29,123 @@ import org.junit.jupiter.api.Test
 
 class SceneRuntimeLifecycleIntegrationTest {
     @Test
+    fun `readiness host exceptions become deterministic creation failures`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val base = request(instance, RecordingRenderer(instance), RecordingActions())
+
+        val creation =
+            SceneRuntimeFactory.create(
+                    base.copy(
+                        renderers =
+                            SceneAssetRendererRegistry { _, _ ->
+                                throw IllegalStateException("host registry failed")
+                            }
+                    )
+                )
+                .toCompletableFuture()
+
+        assertTrue(creation.isDone)
+        val problem = assertIs<SceneRuntimeCreationResult.Failure>(creation.get()).problems.single()
+        assertEquals(SceneRuntimeProblemCode.RUNTIME_FAILURE, problem.code)
+        assertEquals("runtime", problem.path)
+        assertEquals("Runtime readiness check failed.", problem.message)
+        assertEquals(emptySet(), instance.eventNode().children)
+    }
+
+    @Test
+    fun `close aborts a never completing automatic activation and closes a late handle`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
+            it.setInstance(instance, Pos(0.0, 0.0, 0.0)).join()
+        }
+        val renderer = RecordingRenderer(instance)
+        val automaticScene = automaticScene()
+        val creation =
+            SceneRuntimeFactory.create(
+                    request(instance, renderer, RecordingActions(), scene = automaticScene)
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { creation.isDone }
+        val runtime = assertIs<SceneRuntimeCreationResult.Success>(creation.get()).runtime
+
+        tickUntil(instance) { renderer.createCalls == 1 }
+        val interaction = instance.entities.single { it.entityType == EntityType.INTERACTION }
+        val close = runtime.close().toCompletableFuture()
+
+        tickUntil(instance) { close.isDone }
+        close.get()
+        assertTrue(interaction.isRemoved)
+
+        Thread.startVirtualThread { renderer.completion.complete(renderer.handle) }.join()
+        tickUntil(instance) { renderer.handle.closed }
+        assertTrue(renderer.handle.entitiesRemovedWhenClosed)
+    }
+
+    @Test
+    fun `inactive npc emits no sensor trigger and keeps proximity membership for reactivation`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val player =
+            Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
+                it.setInstance(instance, Pos(0.0, 0.0, -0.2, 0.0f, 0.0f)).join()
+            }
+        val renderer = ImmediateRenderer(instance)
+        val actions = RecordingActions()
+        val sensorBindings =
+            listOf(
+                TriggerBinding(
+                    SceneTrigger.PROXIMITY_ENTER,
+                    emptyList(),
+                    0,
+                    0,
+                    listOf(ApplicationAction(ActionKey("test:proximity"), emptyMap())),
+                ),
+                TriggerBinding(
+                    SceneTrigger.HOVER_LEAVE,
+                    emptyList(),
+                    0,
+                    0,
+                    listOf(ApplicationAction(ActionKey("test:hover-leave"), emptyMap())),
+                ),
+            )
+        val sensorScene =
+            automaticScene(
+                transform =
+                    Transform(
+                        Vec3(0.0, 0.0, 0.0),
+                        EulerRotation(0.0, 0.0, 0.0),
+                        Vec3(1.0, 1.0, 1.0),
+                    ),
+                proximity = ProximitySensor(3.0, 4.0),
+                bindings = sensorBindings,
+            )
+        val config =
+            SceneRuntimeConfig(
+                activationDistance = 0.5,
+                deactivationDistance = 1.0,
+                deactivationGraceMillis = 0,
+                spatialIntervalTicks = 1,
+            )
+        val creation =
+            SceneRuntimeFactory.create(request(instance, renderer, actions, sensorScene, config))
+                .toCompletableFuture()
+        tickUntil(instance) { creation.isDone }
+        assertIs<SceneRuntimeCreationResult.Success>(creation.get())
+        tickUntil(instance) { actions.contexts.any { it.trigger == SceneTrigger.PROXIMITY_ENTER } }
+        assertEquals(1, actions.contexts.count { it.trigger == SceneTrigger.PROXIMITY_ENTER })
+
+        player.teleport(Pos(0.0, 0.0, -2.0, 0.0f, 0.0f)).join()
+        tickUntil(instance) { renderer.handles.single().closed }
+        instance.tick(0)
+
+        assertTrue(actions.contexts.none { it.trigger == SceneTrigger.HOVER_LEAVE })
+
+        player.teleport(Pos(0.0, 0.0, -0.2, 0.0f, 0.0f)).join()
+        tickUntil(instance) { renderer.handles.size == 2 }
+        repeat(3) { instance.tick(0) }
+        assertEquals(1, actions.contexts.count { it.trigger == SceneTrigger.PROXIMITY_ENTER })
+    }
+
+    @Test
     fun `runtime creation events ticking disconnect and close form one atomic lifecycle`() {
         val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
         val player =
@@ -147,20 +264,23 @@ class SceneRuntimeLifecycleIntegrationTest {
 
     private fun request(
         instance: Instance,
-        renderer: RecordingRenderer,
+        renderer: SceneAssetRendererRegistry,
         actions: RecordingActions,
+        scene: SceneDocument = scene(),
+        config: SceneRuntimeConfig = SceneRuntimeConfig(),
     ) =
         SceneRuntimeRequest(
-            scene = scene(),
+            scene = scene,
             assets = assets(),
             actions = actionCatalog(),
-            identity = SceneRuntimeIdentity(SceneId("test:runtime"), "test:map", 1),
+            identity = SceneRuntimeIdentity(scene.id, "test:map", 1),
             instance = instance,
             renderers = renderer,
             effects = NoEffects,
             playerPolicy = AllowAllPlayers,
             actionRegistry = actions,
             clock = SceneClock { 1_000_000_000L },
+            config = config,
         )
 
     private fun scene() =
@@ -225,6 +345,39 @@ class SceneRuntimeLifecycleIntegrationTest {
                 ),
         )
 
+    private fun automaticScene(
+        transform: Transform? = null,
+        proximity: ProximitySensor? = null,
+        bindings: List<TriggerBinding>? = null,
+    ): SceneDocument {
+        val document = scene()
+        val npc = document.elements.single() as Npc
+        val automaticNpc =
+            Npc(
+                id = npc.id,
+                group = npc.group,
+                transform = transform ?: npc.transform,
+                visible = npc.visible,
+                activation = ActivationPolicy.AUTOMATIC,
+                body = npc.body,
+                label = npc.label,
+                labelOffset = npc.labelOffset,
+                look = npc.look,
+                initialAnimation = npc.initialAnimation,
+                interactionBounds = npc.interactionBounds,
+                proximity = proximity ?: npc.proximity,
+                bindings = bindings ?: npc.bindings,
+            )
+        return SceneDocument(
+            document.schemaVersion,
+            document.id,
+            document.metadata,
+            document.catalogs,
+            document.groups,
+            listOf(automaticNpc),
+        )
+    }
+
     private fun assets() =
         AssetCatalog(
             CatalogId("test:assets"),
@@ -246,7 +399,8 @@ class SceneRuntimeLifecycleIntegrationTest {
         ActionCatalog(
             CatalogId("test:actions"),
             "1",
-            listOf("test:right", "test:left").associate { value ->
+            listOf("test:right", "test:left", "test:proximity", "test:hover-leave").associate {
+                value ->
                 val key = ActionKey(value)
                 key to ActionDefinition(key, value, "", emptyMap())
             },
@@ -274,6 +428,18 @@ class SceneRuntimeLifecycleIntegrationTest {
             createCalls++
             return completion
         }
+    }
+
+    private class ImmediateRenderer(private val instance: Instance) :
+        SceneAssetRendererRegistry, SceneAssetRendererFactory {
+        val handles = mutableListOf<RecordingHandle>()
+
+        override fun rendererFor(asset: AssetKey, kind: AssetKind) = this
+
+        override fun create(
+            context: SceneAssetRenderContext
+        ): CompletionStage<RenderedAssetHandle> =
+            CompletableFuture.completedFuture(RecordingHandle(instance).also { handles += it })
     }
 
     private class RecordingHandle(private val instance: Instance) : RenderedAssetHandle {

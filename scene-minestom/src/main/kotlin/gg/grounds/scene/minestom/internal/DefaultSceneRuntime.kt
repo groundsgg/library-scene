@@ -5,6 +5,7 @@ import gg.grounds.scene.minestom.*
 import gg.grounds.scene.minestom.internal.action.ChainOutcome
 import gg.grounds.scene.minestom.internal.action.SceneActionExecutor
 import gg.grounds.scene.minestom.internal.runtime.ActiveElement
+import gg.grounds.scene.minestom.internal.runtime.ElementActivation
 import gg.grounds.scene.minestom.internal.runtime.ElementActivator
 import gg.grounds.scene.minestom.internal.runtime.LogicalAnimationState
 import gg.grounds.scene.minestom.internal.runtime.LogicalElementState
@@ -46,7 +47,7 @@ internal class DefaultSceneRuntime private constructor(private val request: Scen
 
     private val logicalStates: MutableMap<LocalId, LogicalElementState>
     private val activeElements = linkedMapOf<LocalId, ActiveElement>()
-    private val pendingActivations = linkedMapOf<LocalId, CompletionStage<ActiveElement>>()
+    private val pendingActivations = linkedMapOf<LocalId, ElementActivation>()
     private val chainOwners = mutableMapOf<ChainId, ChainOwner>()
     private val viewers = ViewerStateStore()
     private val sensors = NpcSensorEngine(request.playerPolicy)
@@ -145,12 +146,18 @@ internal class DefaultSceneRuntime private constructor(private val request: Scen
         }
         val state = logicalStates.getValue(elementId)
         val generation = state.generation
-        val stage = activator.activate(state)
+        val activation = activator.beginActivation(state)
+        val stage = activation.stage
         stage.whenComplete { active, error ->
             scheduleContinuation {
-                if (error != null || active == null || state.generation != generation) {
-                    active?.let(activator::deactivate)
-                    failInstallation(elementId)
+                if (
+                    error != null ||
+                        active == null ||
+                        state.generation != generation ||
+                        !activation.claim(active)
+                ) {
+                    val cleanupFailure = activation.abort()
+                    failInstallation(elementId, error?.unwrap() ?: cleanupFailure)
                 } else {
                     activeElements[elementId] = active
                     spatial.markActive(elementId)
@@ -171,12 +178,12 @@ internal class DefaultSceneRuntime private constructor(private val request: Scen
                     .repeat(TaskSchedule.tick(1))
                     .schedule()
             creation.complete(SceneRuntimeCreationResult.Success(this))
-        } catch (_: Throwable) {
-            failInstallation(null)
+        } catch (error: Throwable) {
+            failInstallation(null, error)
         }
     }
 
-    private fun failInstallation(elementId: LocalId?) {
+    private fun failInstallation(elementId: LocalId?, error: Throwable? = null) {
         task?.cancel()
         task = null
         detachEventNode()
@@ -192,6 +199,14 @@ internal class DefaultSceneRuntime private constructor(private val request: Scen
                     elementId,
                     "Element ${elementId.value} failed to activate.",
                 )
+        error?.let {
+            logFailure(
+                if (elementId == null) "INSTALLATION_FAILED" else "ACTIVATION_FAILED",
+                elementId,
+                null,
+                it,
+            )
+        }
         creation.complete(SceneRuntimeCreationResult.Failure(listOf(problem)))
     }
 
@@ -281,16 +296,19 @@ internal class DefaultSceneRuntime private constructor(private val request: Scen
         if (elementId in activeElements || elementId in pendingActivations || closed) return
         val state = logicalStates[elementId] ?: return
         val generation = state.generation
-        val stage = activator.activate(state)
-        pendingActivations[elementId] = stage
+        val activation = activator.beginActivation(state)
+        val stage = activation.stage
+        pendingActivations[elementId] = activation
         stage.whenComplete { active, error ->
             scheduleContinuation {
-                pendingActivations.remove(elementId, stage)
+                pendingActivations.remove(elementId, activation)
                 if (closed || state.generation != generation) {
-                    active?.let(activator::deactivate)
+                    activation.abort()
                 } else if (error != null || active == null) {
                     spatial.markFailed(elementId)
                     logFailure("ACTIVATION_FAILED", elementId, null, error?.unwrap())
+                } else if (!activation.claim(active)) {
+                    spatial.markFailed(elementId)
                 } else {
                     activeElements[elementId] = active
                     spatial.markActive(elementId)
@@ -313,6 +331,7 @@ internal class DefaultSceneRuntime private constructor(private val request: Scen
 
     private fun acceptTrigger(input: SceneTriggerInput) {
         if (closed) return
+        if (activeElement(input.npcId) == null) return
         val state = logicalStates[input.npcId] ?: return
         triggerEngine.accept(input).forEach { chain ->
             val chainId = ChainId(chain.key, chain.generation)
@@ -412,12 +431,14 @@ internal class DefaultSceneRuntime private constructor(private val request: Scen
         viewers.clear()
         closeActiveElements()
         activeElements.clear()
-        val pending = pendingActivations.values.map { it.toCompletableFuture() }
-        if (pending.isEmpty()) finishClose(completion)
-        else
-            CompletableFuture.allOf(*pending.toTypedArray()).whenComplete { _, _ ->
-                scheduleContinuation { finishClose(completion) }
+        pendingActivations.entries
+            .sortedBy { it.key.value }
+            .forEach { (elementId, activation) ->
+                activation.abort()?.let { error ->
+                    logFailure("ELEMENT_CLOSE_FAILED", elementId, null, error)
+                }
             }
+        finishClose(completion)
     }
 
     private fun finishClose(completion: CompletableFuture<Void>) {

@@ -15,15 +15,25 @@ import gg.grounds.scene.minestom.SceneRenderTransform
 import gg.grounds.scene.minestom.internal.geometry.affine
 import gg.grounds.scene.minestom.internal.geometry.transformed
 import java.util.UUID
+import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.CompletionStage
+import kotlin.math.max
 import net.minestom.server.coordinate.Vec
 import net.minestom.server.entity.Entity
 import net.minestom.server.entity.EntityType
 import net.minestom.server.entity.metadata.display.TextDisplayMeta
 import net.minestom.server.entity.metadata.other.InteractionMeta
 import net.minestom.server.instance.Instance
+
+internal interface ElementActivation {
+    val stage: CompletionStage<ActiveElement>
+
+    fun claim(active: ActiveElement): Boolean
+
+    fun abort(): Throwable?
+}
 
 internal class ElementActivator(
     private val instance: Instance,
@@ -33,11 +43,21 @@ internal class ElementActivator(
 ) {
     private val interactionIds = mutableMapOf<UUID, LocalId>()
 
-    fun activate(state: LogicalElementState): CompletionStage<ActiveElement> {
+    fun activate(state: LogicalElementState): CompletionStage<ActiveElement> =
+        startActivation(state, false).stage
+
+    fun beginActivation(state: LogicalElementState): ElementActivation =
+        startActivation(state, true)
+
+    private fun startActivation(
+        state: LogicalElementState,
+        retainUntilClaimed: Boolean,
+    ): ElementActivation {
         val generation = state.generation
         val requested = renderRequests(state.element)
         val npcElement = state.element as? Npc
-        val activation = Activation(state, generation, requested.size, requested.size)
+        val activation =
+            Activation(state, generation, requested.size, requested.size, retainUntilClaimed)
 
         npcElement?.let { npc ->
             try {
@@ -77,7 +97,7 @@ internal class ElementActivator(
             }
         }
         if (requested.isEmpty() && npcElement == null) activation.completed()
-        return activation.future
+        return activation
     }
 
     fun deactivate(active: ActiveElement) {
@@ -127,7 +147,7 @@ internal class ElementActivator(
             val transform = SceneRenderTransform(npc.transform, null)
             val bounds = npc.interactionBounds.transformed(transform.affine())
             (interaction.entityMeta as InteractionMeta).apply {
-                width = (bounds.max.x - bounds.min.x).toFloat()
+                width = max(bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z).toFloat()
                 height = (bounds.max.y - bounds.min.y).toFloat()
                 response = true
             }
@@ -139,16 +159,21 @@ internal class ElementActivator(
                 }
             return NpcPlatformEntities(label, interaction)
         } catch (error: Throwable) {
-            label?.remove()
-            interaction.remove()
-            throw error
+            throw closeOwnedResources(NpcPlatformEntities(label, interaction), emptyList(), error)
+                ?: error
         }
     }
 
     private fun NpcPlatformEntities.setInstanceStages(npc: Npc): List<CompletionStage<Void>> {
         val transform = SceneRenderTransform(npc.transform, null)
         val bounds = npc.interactionBounds.transformed(transform.affine())
-        val center = midpoint(bounds.min, bounds.max).asPoint()
+        val interactionPosition =
+            Vec3(
+                    (bounds.min.x + bounds.max.x) / 2.0,
+                    bounds.min.y,
+                    (bounds.min.z + bounds.max.z) / 2.0,
+                )
+                .asPoint()
         return buildList {
             label?.let {
                 add(
@@ -158,16 +183,13 @@ internal class ElementActivator(
                     )
                 )
             }
-            add(interaction.setInstance(instance, center))
+            add(interaction.setInstance(instance, interactionPosition))
         }
     }
 
     private fun NpcPlatformEntities.resourceCount() = if (label == null) 1 else 2
 
     private fun Vec3.asPoint() = Vec(x, y, z)
-
-    private fun midpoint(first: Vec3, second: Vec3) =
-        Vec3((first.x + second.x) / 2.0, (first.y + second.y) / 2.0, (first.z + second.z) / 2.0)
 
     private data class RenderRequest(val kind: AssetKind, val context: SceneAssetRenderContext)
 
@@ -176,16 +198,22 @@ internal class ElementActivator(
         private val generation: Long,
         private var pending: Int,
         handleCount: Int,
-    ) {
-        val future = CompletableFuture<ActiveElement>()
+        private val retainUntilClaimed: Boolean,
+    ) : ElementActivation {
+        private val future = CompletableFuture<ActiveElement>()
+        override val stage: CompletionStage<ActiveElement>
+            get() = future
+
         private val handles = arrayOfNulls<RenderedAssetHandle>(handleCount)
         private var npc: NpcPlatformEntities? = null
         private var terminal = false
+        private var terminalFailure: Throwable? = null
+        private var published: ActiveElement? = null
 
         fun handleCompleted(index: Int, handle: RenderedAssetHandle) {
             synchronized(this) {
                 if (terminal) {
-                    handle.close()
+                    recordLateCleanup(closeOwnedResources(null, listOf(handle)))
                     return
                 }
                 handles[index] = handle
@@ -198,7 +226,7 @@ internal class ElementActivator(
         fun attach(platformEntities: NpcPlatformEntities): Boolean =
             synchronized(this) {
                 if (terminal) {
-                    platformEntities.close()
+                    recordLateCleanup(closeOwnedResources(platformEntities, emptyList()))
                     false
                 } else {
                     npc = platformEntities
@@ -223,10 +251,33 @@ internal class ElementActivator(
             synchronized(this) {
                 if (terminal) return
                 terminal = true
-                closeResources()
-                future.completeExceptionally(error)
+                terminalFailure = closeOwnedResources(npc, handles.filterNotNull(), error) ?: error
+                future.completeExceptionally(terminalFailure)
             }
         }
+
+        override fun claim(active: ActiveElement): Boolean =
+            synchronized(this) {
+                if (!retainUntilClaimed || published !== active) return@synchronized false
+                published = null
+                true
+            }
+
+        override fun abort(): Throwable? =
+            synchronized(this) {
+                published?.let { active ->
+                    published = null
+                    active.npcEntities?.interaction?.uuid?.let(interactionIds::remove)
+                    return@synchronized closeOwnedResources(active.npcEntities, active.handles)
+                }
+                if (terminal) return@synchronized null
+                val cancellation = CancellationException("Element activation was aborted.")
+                terminal = true
+                terminalFailure =
+                    closeOwnedResources(npc, handles.filterNotNull(), cancellation) ?: cancellation
+                future.completeExceptionally(terminalFailure)
+                terminalFailure?.takeIf { it.suppressed.isNotEmpty() }
+            }
 
         private fun resourceCompletedLocked() {
             pending--
@@ -235,22 +286,28 @@ internal class ElementActivator(
 
         private fun publishOrClose() {
             if (terminal) return
-            terminal = true
             val completedHandles = handles.map { requireNotNull(it) }
             if (state.generation != generation) {
-                closeResources(completedHandles)
-                future.completeExceptionally(
-                    IllegalStateException("Activation generation is stale.")
-                )
+                terminal = true
+                val error = IllegalStateException("Activation generation is stale.")
+                terminalFailure = closeOwnedResources(npc, completedHandles, error) ?: error
+                future.completeExceptionally(terminalFailure)
                 return
             }
-            state.animation.animation?.let { animation ->
-                val elapsedMillis =
-                    state.animation.startedNanos?.let { (clock.nanoTime() - it) / 1_000_000 } ?: 0
-                completedHandles.forEach { it.startAnimation(animation, elapsedMillis) }
+            try {
+                state.animation.animation?.let { animation ->
+                    val elapsedMillis =
+                        state.animation.startedNanos?.let { (clock.nanoTime() - it) / 1_000_000 }
+                            ?: 0
+                    completedHandles.forEach { it.startAnimation(animation, elapsedMillis) }
+                }
+            } catch (error: Throwable) {
+                failed(error)
+                return
             }
+            terminal = true
             npc?.let { interactionIds[it.interaction.uuid] = state.element.id }
-            future.complete(
+            val active =
                 ActiveElement(
                     state.element.id,
                     generation,
@@ -258,14 +315,13 @@ internal class ElementActivator(
                     npc,
                     state.element as? Npc,
                 )
-            )
+            if (retainUntilClaimed) published = active
+            future.complete(active)
         }
 
-        private fun closeResources(
-            handlesToClose: List<RenderedAssetHandle> = handles.filterNotNull()
-        ) {
-            npc?.close()
-            handlesToClose.asReversed().forEach(RenderedAssetHandle::close)
+        private fun recordLateCleanup(error: Throwable?) {
+            if (error == null) return
+            terminalFailure?.let { failure -> if (error !== failure) failure.addSuppressed(error) }
         }
     }
 }

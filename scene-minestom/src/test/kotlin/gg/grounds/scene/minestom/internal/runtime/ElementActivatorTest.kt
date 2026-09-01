@@ -5,6 +5,7 @@ import gg.grounds.scene.minestom.*
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
+import java.util.concurrent.ExecutionException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -115,10 +116,11 @@ class ElementActivatorTest {
         val label = assertNotNull(entities.label)
         assertEquals(Component.text("Guide"), (label.entityMeta as TextDisplayMeta).text)
         (entities.interaction.entityMeta as InteractionMeta).also { interaction ->
-            assertEquals(2.0f, interaction.width)
+            assertEquals(4.0f, interaction.width)
             assertEquals(3.0f, interaction.height)
             assertTrue(interaction.response)
         }
+        assertEquals(-0.5, entities.interaction.position.y())
         assertEquals(state.element.id, activator.interactionElementId(entities.interaction.uuid))
         activator.deactivate(active)
         assertNull(activator.interactionElementId(entities.interaction.uuid))
@@ -173,6 +175,39 @@ class ElementActivatorTest {
         factory.complete(2)
 
         assertTrueEventually { factory.handles.all { it.closed } }
+    }
+
+    @Test
+    fun `rollback attempts every completed handle and preserves the activation failure`() {
+        val factory = RecordingFactory()
+        val activation = activator(factory).activate(state(composite("a", "b", "c")))
+        factory.complete(0)
+        factory.complete(1)
+        factory.handles.last().closeFailure = IllegalStateException("close failed: test:b")
+
+        factory.fail(2)
+
+        assertTrue(activation.toCompletableFuture().isDone)
+        val failure = assertFailsWith<ExecutionException> { activation.await() }.cause
+        assertEquals("renderer failed", failure?.message)
+        assertEquals(listOf("close failed: test:b"), failure?.suppressed?.map { it.message })
+        assertTrue(factory.handles.all { it.closed })
+    }
+
+    @Test
+    fun `active element close attempts every owned handle after a close failure`() {
+        val first = RecordingHandle("test:a")
+        val second =
+            RecordingHandle("test:b").also {
+                it.closeFailure = IllegalStateException("close failed: test:b")
+            }
+        val third = RecordingHandle("test:c")
+        val active = ActiveElement(LocalId("composite"), 1L, listOf(first, second, third), null)
+
+        val failure = assertFailsWith<IllegalStateException> { active.close() }
+
+        assertEquals("close failed: test:b", failure.message)
+        assertTrue(listOf(first, second, third).all { it.closed })
     }
 
     @Test
@@ -320,6 +355,7 @@ class ElementActivatorTest {
 
     private class RecordingHandle(val asset: String) : RenderedAssetHandle {
         var closed = false
+        var closeFailure: Throwable? = null
         val startedAnimations = mutableListOf<Pair<LocalId, Long>>()
 
         override fun applyTransform(transform: SceneRenderTransform) = Unit
@@ -341,6 +377,7 @@ class ElementActivatorTest {
 
         override fun close() {
             closed = true
+            closeFailure?.let { throw it }
         }
     }
 }
