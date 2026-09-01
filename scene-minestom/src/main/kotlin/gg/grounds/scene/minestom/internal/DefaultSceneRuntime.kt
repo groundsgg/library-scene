@@ -25,6 +25,7 @@ import gg.grounds.scene.minestom.internal.view.ViewerStateStore
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.CompletionStage
+import java.util.concurrent.ConcurrentLinkedQueue
 import net.minestom.server.entity.Player
 import net.minestom.server.timer.Task
 import net.minestom.server.timer.TaskSchedule
@@ -35,6 +36,8 @@ private constructor(
     private val request: SceneRuntimeRequest,
     private val capabilities: SceneRuntimeCapabilities,
     private val ownerSchedule: (Runnable) -> Unit,
+    private val sensorActivation: ((ActiveElement) -> Unit)?,
+    private val failureObserver: (String, Throwable) -> Unit,
 ) : SceneRuntime {
     override val identity: SceneRuntimeIdentity = request.identity
 
@@ -53,6 +56,9 @@ private constructor(
     private val logicalStates: MutableMap<LocalId, LogicalElementState>
     private val activeElements = linkedMapOf<LocalId, ActiveElement>()
     private val pendingActivations = linkedMapOf<LocalId, PendingActivation>()
+    private val rejectedActivations = ConcurrentLinkedQueue<RejectedActivation>()
+    private val preparedLock = Any()
+    private val preparedAlways = mutableListOf<PreparedActivation>()
     private val chainOwners = mutableMapOf<ChainId, ChainOwner>()
     private val viewers = ViewerStateStore(request.clock)
     private val sensors = NpcSensorEngine(request.instance, request.playerPolicy)
@@ -133,7 +139,8 @@ private constructor(
     private fun start(): CompletionStage<SceneRuntimeCreationResult> {
         try {
             marshal(Runnable(::beginInstallation))
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
+            logFailure("INSTALLATION_SCHEDULE_FAILED", null, null, error)
             creation.complete(
                 SceneRuntimeCreationResult.Failure(
                     listOf(runtimeProblem("Runtime installation could not be scheduled."))
@@ -154,7 +161,7 @@ private constructor(
     private fun activatePrepared(always: List<LocalId>, index: Int) {
         val elementId = always.getOrNull(index)
         if (elementId == null) {
-            installNodeAndTask()
+            if (publishPreparedAlways()) installNodeAndTask()
             return
         }
         val state = logicalStates.getValue(elementId)
@@ -172,6 +179,7 @@ private constructor(
                     onRejected = { continuationError ->
                         val failure = error?.unwrap().withSuppressed(continuationError)
                         activation.abort()?.let(failure::addSuppressedDistinct)
+                        abortPreparedAlways(failure)
                         logFailure("CONTINUATION_SCHEDULE_FAILED", elementId, null, failure)
                         creation.complete(
                             SceneRuntimeCreationResult.Failure(
@@ -193,18 +201,10 @@ private constructor(
                         val failure = error?.unwrap()
                         val cleanupFailure = activation.abort()
                         failInstallation(elementId, failure ?: cleanupFailure)
-                    } else if (!spatial.markActive(elementId, transition.epoch)) {
-                        val failure = IllegalStateException("Activation desire is stale.")
-                        activation.abort()?.let(failure::addSuppressedDistinct)
-                        failInstallation(elementId, failure)
-                    } else if (!activation.claim(active)) {
-                        val failure =
-                            IllegalStateException("Activation ownership could not be claimed.")
-                        activation.abort()?.let(failure::addSuppressedDistinct)
-                        failInstallation(elementId, failure)
                     } else {
-                        activeElements[elementId] = active
-                        sensors.activate(active)
+                        rememberPrepared(
+                            PreparedActivation(elementId, transition.epoch, activation, active)
+                        )
                         activatePrepared(always, index + 1)
                     }
                 }
@@ -213,6 +213,76 @@ private constructor(
             activation.abort()?.let(error::addSuppressedDistinct)
             failInstallation(elementId, error)
         }
+    }
+
+    private fun publishPreparedAlways(): Boolean {
+        val prepared = preparedAlwaysSnapshot()
+        var sensorAttemptCount = 0
+        var publishingElementId: LocalId? = null
+        return try {
+            prepared.forEach { entry ->
+                publishingElementId = entry.elementId
+                sensorAttemptCount++
+                activateSensor(entry.active)
+            }
+            prepared.forEach { entry ->
+                publishingElementId = entry.elementId
+                check(spatial.markActive(entry.elementId, entry.epoch)) {
+                    "Activation desire is stale."
+                }
+            }
+            prepared.forEach { entry ->
+                publishingElementId = entry.elementId
+                activeElements[entry.elementId] = entry.active
+                val claimed =
+                    try {
+                        entry.activation.claim(entry.active)
+                    } catch (error: Throwable) {
+                        activeElements.remove(entry.elementId, entry.active)
+                        throw error
+                    }
+                if (!claimed) {
+                    activeElements.remove(entry.elementId, entry.active)
+                    error("Activation ownership could not be claimed.")
+                }
+            }
+            clearPreparedAlways()
+            true
+        } catch (error: Throwable) {
+            prepared.take(sensorAttemptCount).asReversed().forEach { entry ->
+                try {
+                    sensors.deactivate(entry.elementId)
+                } catch (cleanupError: Throwable) {
+                    error.addSuppressedDistinct(cleanupError)
+                }
+            }
+            abortPreparedAlways(error)
+            failInstallation(publishingElementId, error)
+            false
+        }
+    }
+
+    private fun rememberPrepared(prepared: PreparedActivation) {
+        synchronized(preparedLock) { preparedAlways += prepared }
+    }
+
+    private fun preparedAlwaysSnapshot(): List<PreparedActivation> =
+        synchronized(preparedLock) { preparedAlways.toList() }
+
+    private fun clearPreparedAlways() {
+        synchronized(preparedLock) { preparedAlways.clear() }
+    }
+
+    private fun abortPreparedAlways(primary: Throwable? = null): Throwable? {
+        val prepared =
+            synchronized(preparedLock) { preparedAlways.toList().also { preparedAlways.clear() } }
+        var failure = primary
+        prepared.asReversed().forEach { entry ->
+            entry.activation.abort()?.let { cleanupError ->
+                failure = failure.withSuppressed(cleanupError)
+            }
+        }
+        return failure
     }
 
     private fun installNodeAndTask() {
@@ -232,10 +302,16 @@ private constructor(
     }
 
     private fun failInstallation(elementId: LocalId?, error: Throwable? = null) {
+        var failure = abortPreparedAlways(error)
         task?.cancel()
         task = null
         detachEventNode()
         logicalStates.values.forEach { it.generation++ }
+        try {
+            sensors.clear()
+        } catch (cleanupError: Throwable) {
+            failure = failure.withSuppressed(cleanupError)
+        }
         closeActiveElements()
         activeElements.clear()
         val problem =
@@ -247,7 +323,7 @@ private constructor(
                     elementId,
                     "Element ${elementId.value} failed to activate.",
                 )
-        error?.let {
+        failure?.let {
             logFailure(
                 if (elementId == null) "INSTALLATION_FAILED" else "ACTIVATION_FAILED",
                 elementId,
@@ -268,6 +344,7 @@ private constructor(
     }
 
     private fun tickRuntime() {
+        reconcileRejectedActivations()
         val players = request.instance.players.sortedBy { it.uuid.toString() }
         val eligible =
             players.filter { player ->
@@ -315,6 +392,15 @@ private constructor(
             }
         }
         spatial.drainTransitions().forEach(::applyTransitionSafely)
+    }
+
+    private fun reconcileRejectedActivations() {
+        while (true) {
+            val rejected = rejectedActivations.poll() ?: return
+            if (pendingActivations.remove(rejected.elementId, rejected.pending)) {
+                spatial.retryActivation(rejected.elementId, rejected.pending.epoch)
+            }
+        }
     }
 
     private fun advanceAnimations(active: List<ActiveElement>) {
@@ -368,6 +454,7 @@ private constructor(
                     onRejected = { continuationError ->
                         val failure = error?.unwrap().withSuppressed(continuationError)
                         activation.abort()?.let(failure::addSuppressedDistinct)
+                        rejectedActivations.add(RejectedActivation(elementId, pending))
                         logFailure("CONTINUATION_SCHEDULE_FAILED", elementId, null, failure)
                     }
                 ) {
@@ -384,25 +471,44 @@ private constructor(
                         spatial.markFailed(elementId)
                         logFailure("ACTIVATION_FAILED", elementId, null, error?.unwrap())
                     } else {
+                        var sensorPublicationAttempted = false
+                        var ownershipClaimed = false
                         try {
                             viewers.keysForElement(elementId).forEach {
                                 viewers.apply(request.instance, active, it)
                             }
-                            if (!spatial.isActivationCurrent(elementId, pending.epoch)) {
-                                activation.abort()
-                                spatial.markFailed(elementId)
-                            } else if (!spatial.markActive(elementId, pending.epoch)) {
-                                activation.abort()
-                                spatial.markFailed(elementId)
-                            } else if (activation.claim(active)) {
-                                activeElements[elementId] = active
-                                sensors.activate(active)
-                            } else {
-                                activation.abort()
-                                spatial.markFailed(elementId)
+                            check(spatial.isActivationCurrent(elementId, pending.epoch)) {
+                                "Activation desire is stale."
+                            }
+                            sensorPublicationAttempted = true
+                            activateSensor(active)
+                            check(spatial.markActive(elementId, pending.epoch)) {
+                                "Activation desire is stale."
+                            }
+                            activeElements[elementId] = active
+                            ownershipClaimed = activation.claim(active)
+                            if (!ownershipClaimed) {
+                                activeElements.remove(elementId, active)
+                                error("Activation ownership could not be claimed.")
                             }
                         } catch (applyFailure: Throwable) {
-                            activation.abort()
+                            if (sensorPublicationAttempted) {
+                                try {
+                                    sensors.deactivate(elementId)
+                                } catch (cleanupError: Throwable) {
+                                    applyFailure.addSuppressedDistinct(cleanupError)
+                                }
+                            }
+                            activeElements.remove(elementId)?.let { published ->
+                                if (ownershipClaimed) {
+                                    try {
+                                        activator.deactivate(published)
+                                    } catch (cleanupError: Throwable) {
+                                        applyFailure.addSuppressedDistinct(cleanupError)
+                                    }
+                                }
+                            }
+                            activation.abort()?.let(applyFailure::addSuppressedDistinct)
                             spatial.markFailed(elementId)
                             logFailure("VIEWER_REAPPLY_FAILED", elementId, null, applyFailure)
                         }
@@ -619,6 +725,7 @@ private constructor(
     }
 
     private fun finishClose(completion: CompletableFuture<Void>) {
+        rejectedActivations.clear()
         pendingActivations.clear()
         logicalStates.clear()
         completion.complete(null)
@@ -650,6 +757,11 @@ private constructor(
     private fun player(playerId: java.util.UUID) = request.instance.getPlayerByUuid(playerId)
 
     private fun marshal(action: Runnable) = ownerSchedule(action)
+
+    private fun activateSensor(active: ActiveElement) {
+        val injected = sensorActivation
+        if (injected == null) sensors.activate(active) else injected(active)
+    }
 
     private fun scheduleContinuation(onRejected: (Throwable) -> Unit, action: () -> Unit) {
         fun reject(error: Throwable, code: String) {
@@ -694,6 +806,13 @@ private constructor(
         SceneRuntimeProblem(SceneRuntimeProblemCode.RUNTIME_FAILURE, "runtime", null, message)
 
     private fun logFailure(code: String, elementId: LocalId?, player: Player?, error: Throwable?) {
+        error?.let { failure ->
+            try {
+                failureObserver(code, failure)
+            } catch (observerError: Throwable) {
+                failure.addSuppressedDistinct(observerError)
+            }
+        }
         LOGGER.error(
             "Scene runtime failure code={} scene={} element={} player={}",
             code,
@@ -710,6 +829,15 @@ private constructor(
 
     private data class PendingActivation(val epoch: Long, val activation: ElementActivation)
 
+    private data class RejectedActivation(val elementId: LocalId, val pending: PendingActivation)
+
+    private data class PreparedActivation(
+        val elementId: LocalId,
+        val epoch: Long,
+        val activation: ElementActivation,
+        val active: ActiveElement,
+    )
+
     companion object {
         private val LOGGER = LoggerFactory.getLogger(DefaultSceneRuntime::class.java)
 
@@ -717,15 +845,24 @@ private constructor(
             request: SceneRuntimeRequest,
             capabilities: SceneRuntimeCapabilities,
         ): CompletionStage<SceneRuntimeCreationResult> =
-            DefaultSceneRuntime(request, capabilities, request.instance.scheduler()::execute)
+            DefaultSceneRuntime(
+                    request,
+                    capabilities,
+                    request.instance.scheduler()::execute,
+                    null,
+                    { _, _ -> },
+                )
                 .start()
 
         internal fun create(
             request: SceneRuntimeRequest,
             capabilities: SceneRuntimeCapabilities,
             schedule: (Runnable) -> Unit,
+            activateSensor: ((ActiveElement) -> Unit)? = null,
+            failureObserver: (String, Throwable) -> Unit = { _, _ -> },
         ): CompletionStage<SceneRuntimeCreationResult> =
-            DefaultSceneRuntime(request, capabilities, schedule).start()
+            DefaultSceneRuntime(request, capabilities, schedule, activateSensor, failureObserver)
+                .start()
     }
 }
 

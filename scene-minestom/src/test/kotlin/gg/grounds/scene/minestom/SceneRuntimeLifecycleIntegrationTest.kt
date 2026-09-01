@@ -205,6 +205,149 @@ class SceneRuntimeLifecycleIntegrationTest {
     }
 
     @Test
+    fun `continuation rejection during partial always installation closes every prepared handle`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val renderer = SequencedRenderer(instance)
+        val runtimeRequest =
+            request(
+                instance,
+                renderer,
+                RecordingActions(),
+                scene = alwaysPropPairScene(),
+                assetCatalog = propAssets(),
+            )
+        val readiness = readiness(runtimeRequest)
+        var acceptedBeforeRejection = -1
+        val creation =
+            DefaultSceneRuntime.create(
+                    runtimeRequest,
+                    checkNotNull(readiness.capabilities),
+                    schedule = { action ->
+                        if (acceptedBeforeRejection == 0) {
+                            acceptedBeforeRejection = -1
+                            throw IllegalStateException("owner scheduler rejected continuation")
+                        }
+                        if (acceptedBeforeRejection > 0) acceptedBeforeRejection--
+                        instance.scheduler().execute(action)
+                    },
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { renderer.createCalls == 1 }
+        Thread.startVirtualThread { renderer.complete(0) }.join()
+        tickUntil(instance) { renderer.createCalls == 2 }
+
+        acceptedBeforeRejection = 1
+        Thread.startVirtualThread { renderer.complete(1) }.join()
+        tickUntil(instance) { creation.isDone }
+
+        assertIs<SceneRuntimeCreationResult.Failure>(creation.get())
+        assertTrue(renderer.handles.all { it.closed })
+    }
+
+    @Test
+    fun `automatic continuation rejection clears pending ownership and permits retry`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
+            it.setInstance(instance, Pos.ZERO).join()
+        }
+        val renderer = SequencedRenderer(instance)
+        val runtimeRequest =
+            request(
+                instance,
+                renderer,
+                RecordingActions(),
+                scene = automaticPropScene(),
+                config = SceneRuntimeConfig(spatialIntervalTicks = 100),
+                assetCatalog = propAssets(),
+            )
+        val readiness = readiness(runtimeRequest)
+        var acceptedBeforeRejection = -1
+        val creation =
+            DefaultSceneRuntime.create(
+                    runtimeRequest,
+                    checkNotNull(readiness.capabilities),
+                    schedule = { action ->
+                        if (acceptedBeforeRejection == 0) {
+                            acceptedBeforeRejection = -1
+                            throw IllegalStateException("owner scheduler rejected continuation")
+                        }
+                        if (acceptedBeforeRejection > 0) acceptedBeforeRejection--
+                        instance.scheduler().execute(action)
+                    },
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { creation.isDone }
+        assertIs<SceneRuntimeCreationResult.Success>(creation.get())
+        tickUntil(instance) { renderer.createCalls == 1 }
+
+        acceptedBeforeRejection = 1
+        Thread.startVirtualThread { renderer.complete(0) }.join()
+        tickUntil(instance) { renderer.handles.single().closed }
+
+        tickUntil(instance) { renderer.createCalls == 2 }
+    }
+
+    @Test
+    fun `sensor publication failure closes ownership without publishing active state`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
+            it.setInstance(instance, Pos.ZERO).join()
+        }
+        val renderer = ImmediateRenderer(instance)
+        val runtimeRequest =
+            request(
+                instance,
+                renderer,
+                RecordingActions(),
+                scene = automaticPropScene(),
+                assetCatalog = propAssets(),
+            )
+        val creation =
+            DefaultSceneRuntime.create(
+                    runtimeRequest,
+                    checkNotNull(readiness(runtimeRequest).capabilities),
+                    schedule = instance.scheduler()::execute,
+                    activateSensor = { throw IllegalStateException("sensor publication failed") },
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { creation.isDone }
+        val runtime = assertIs<SceneRuntimeCreationResult.Success>(creation.get()).runtime
+
+        tickUntil(instance) { renderer.handles.singleOrNull()?.closeCount == 1 }
+        runtime.close().toCompletableFuture().also { close -> tickUntil(instance) { close.isDone } }
+
+        assertEquals(1, renderer.handles.single().closeCount)
+    }
+
+    @Test
+    fun `initial scheduler rejection reports the original cause`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val runtimeRequest =
+            request(
+                instance,
+                ImmediateRenderer(instance),
+                RecordingActions(),
+                scene = automaticPropScene(),
+                assetCatalog = propAssets(),
+            )
+        val schedulerFailure = IllegalStateException("initial scheduler rejected installation")
+        val reported = mutableListOf<Pair<String, Throwable>>()
+
+        val creation =
+            DefaultSceneRuntime.create(
+                    runtimeRequest,
+                    checkNotNull(readiness(runtimeRequest).capabilities),
+                    schedule = { throw schedulerFailure },
+                    failureObserver = { code, error -> reported += code to error },
+                )
+                .toCompletableFuture()
+
+        assertIs<SceneRuntimeCreationResult.Failure>(creation.get())
+        assertEquals("INSTALLATION_SCHEDULE_FAILED", reported.single().first)
+        assertSame(schedulerFailure, reported.single().second)
+    }
+
+    @Test
     fun `inactive npc emits no sensor trigger and keeps proximity membership for reactivation`() {
         val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
         val player =
@@ -704,6 +847,46 @@ class SceneRuntimeLifecycleIntegrationTest {
         )
     }
 
+    private fun alwaysPropPairScene(): SceneDocument {
+        val base = alwaysPropScene()
+        val first = base.elements.single() as Prop
+        return SceneDocument(
+            base.schemaVersion,
+            base.id,
+            base.metadata,
+            base.catalogs,
+            base.groups,
+            listOf(first.copy(id = LocalId("first")), first.copy(id = LocalId("second"))),
+        )
+    }
+
+    private fun automaticPropScene(): SceneDocument {
+        val base = alwaysPropScene()
+        val prop = base.elements.single() as Prop
+        return SceneDocument(
+            base.schemaVersion,
+            base.id,
+            base.metadata,
+            base.catalogs,
+            base.groups,
+            listOf(prop.copy(activation = ActivationPolicy.AUTOMATIC)),
+        )
+    }
+
+    private fun readiness(request: SceneRuntimeRequest) =
+        SceneReadiness.prepare(
+            SceneReadinessRequest(
+                request.scene,
+                request.assets,
+                request.actions,
+                request.renderers,
+                request.effects,
+                request.actionRegistry,
+                request.identity,
+                request.config,
+            )
+        )
+
     private fun assets() =
         AssetCatalog(
             CatalogId("test:assets"),
@@ -773,6 +956,28 @@ class SceneRuntimeLifecycleIntegrationTest {
         }
     }
 
+    private class SequencedRenderer(private val instance: Instance) :
+        SceneAssetRendererRegistry, SceneAssetRendererFactory {
+        val completions = mutableListOf<CompletableFuture<RenderedAssetHandle>>()
+        val handles = mutableListOf<RecordingHandle>()
+        var createCalls = 0
+
+        override fun rendererFor(asset: AssetKey, kind: AssetKind) = this
+
+        override fun create(
+            context: SceneAssetRenderContext
+        ): CompletionStage<RenderedAssetHandle> {
+            createCalls++
+            return CompletableFuture<RenderedAssetHandle>().also(completions::add)
+        }
+
+        fun complete(index: Int) {
+            val handle = RecordingHandle(instance)
+            handles += handle
+            completions[index].complete(handle)
+        }
+    }
+
     private class ImmediateRenderer(private val instance: Instance) :
         SceneAssetRendererRegistry, SceneAssetRendererFactory {
         val handles = mutableListOf<RecordingHandle>()
@@ -814,6 +1019,7 @@ class SceneRuntimeLifecycleIntegrationTest {
         val animationAdvances = mutableListOf<Long>()
         val clearedViewers = mutableListOf<UUID>()
         var closed = false
+        var closeCount = 0
         var entitiesRemovedWhenClosed = false
         var failNextAnimationAdvance = false
         var failNextViewerClear = false
@@ -847,6 +1053,7 @@ class SceneRuntimeLifecycleIntegrationTest {
 
         override fun close() {
             closed = true
+            closeCount++
             entitiesRemovedWhenClosed =
                 instance.entities.none { it.entityType == EntityType.INTERACTION }
         }

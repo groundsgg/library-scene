@@ -135,6 +135,14 @@ internal class ActivationController(
         return true
     }
 
+    fun retryActivation(elementId: LocalId, epoch: Long): Boolean {
+        if (!isActivationCurrent(elementId, epoch)) return false
+        activating.remove(elementId)
+        inactive.add(elementId)
+        request(elementId, ActivationTransitionKind.ACTIVATE)
+        return true
+    }
+
     fun markInactive(elementId: LocalId) {
         active.remove(elementId)
         activating.remove(elementId)
