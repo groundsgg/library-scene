@@ -3,6 +3,7 @@ package gg.grounds.scene.minestom
 import java.nio.file.Path
 import java.util.jar.JarFile
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class SceneMinestomDependencyBoundaryTest {
@@ -41,15 +42,35 @@ class SceneMinestomDependencyBoundaryTest {
             val entries =
                 archive.entries().asSequence().filter { !it.isDirectory }.map { it.name }.toList()
             assertTrue("gg/grounds/scene/minestom/SceneRuntime.class" in entries)
-            entries
-                .firstOrNull {
-                    it.startsWith("gg/grounds/scene/testkit/") ||
-                        it.startsWith("org/junit/") ||
-                        it.startsWith("kotlin/test/")
-                }
-                ?.let { entry ->
-                    throw AssertionError("Test class leaked into production JAR: $entry")
-                }
+            assertNoTestContent(entries)
         }
     }
+
+    @Test
+    fun `own test classes fixtures and resources are rejected from production jars`() {
+        listOf(
+                "gg/grounds/scene/minestom/SceneMinestomDependencyBoundaryTest.class",
+                "gg/grounds/scene/minestom/SceneMinestomJavaFixtures.class",
+                "abi/public-api.txt",
+            )
+            .forEach { entry ->
+                val failure = assertFailsWith<AssertionError> { assertNoTestContent(listOf(entry)) }
+                assertTrue(failure.message!!.contains(entry))
+            }
+    }
+
+    private fun assertNoTestContent(entries: Iterable<String>) {
+        entries.firstOrNull(::isTestContent)?.let { entry ->
+            throw AssertionError("Test content leaked into production JAR: $entry")
+        }
+    }
+
+    private fun isTestContent(entry: String): Boolean =
+        entry.startsWith("gg/grounds/scene/testkit/") ||
+            entry.startsWith("org/junit/") ||
+            entry.startsWith("kotlin/test/") ||
+            entry.startsWith("abi/") ||
+            entry
+                .substringAfterLast('/')
+                .matches(Regex(".*(?:Test|Tests|Fixture|Fixtures)(?:\\$.*)?\\.class"))
 }
