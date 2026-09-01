@@ -18,6 +18,9 @@ internal class LookController(
     private val rotations = mutableMapOf<gg.grounds.scene.format.LocalId, EulerRotation>()
 
     fun update(players: List<Player>, activeNpcs: List<ActiveElement>) {
+        val activeIds = activeNpcs.map { it.elementId }.toSet()
+        updatedAt.keys.removeIf { it !in activeIds }
+        rotations.keys.removeIf { it !in activeIds }
         val now = clock.nanoTime()
         activeNpcs.forEach { active ->
             val npc = active.npc ?: return@forEach
@@ -72,12 +75,6 @@ internal class LookController(
             }
             entity.setView(rotation.yaw.toFloat(), rotation.pitch.toFloat())
         }
-    }
-
-    /** Drops concrete-handle rotation state so a later activation starts from authored rotation. */
-    fun removeElement(elementId: gg.grounds.scene.format.LocalId) {
-        updatedAt.remove(elementId)
-        rotations.remove(elementId)
     }
 
     private fun distanceSquared(player: Player, x: Double, y: Double, z: Double): Double {
