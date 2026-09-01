@@ -8,8 +8,10 @@ import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import net.minestom.server.MinecraftServer
+import net.minestom.server.coordinate.Pos
 import net.minestom.server.entity.GameMode
 import net.minestom.server.entity.Player
+import net.minestom.server.instance.Instance
 import net.minestom.server.network.packet.server.SendablePacket
 import net.minestom.server.network.player.GameProfile
 import net.minestom.server.network.player.PlayerConnection
@@ -18,7 +20,7 @@ class SceneTriggerPipelineTest {
     @Test
     fun `conditions require every hand sneaking permission and game mode match`() {
         val player =
-            player().also {
+            player(instance()).also {
                 it.setGameMode(GameMode.ADVENTURE)
                 it.setSneaking(true)
             }
@@ -40,11 +42,13 @@ class SceneTriggerPipelineTest {
 
     @Test
     fun `accepts matching bindings in document order and guards debounce inflight cooldown and invalidation`() {
-        val player = player()
+        val instance = instance()
+        val player = player(instance)
         val first = binding(debounce = 10, cooldown = 20)
         val second = binding()
         val engine =
             TriggerEngine(
+                instance,
                 { id -> if (id == player.uuid) player else null },
                 Policy(),
                 { listOf(first, second) },
@@ -86,6 +90,36 @@ class SceneTriggerPipelineTest {
         )
     }
 
+    @Test
+    fun `accept admits only a live eligible player in the target instance`() {
+        val target = instance()
+        val player = player(target)
+        val binding = binding()
+        val resolver: (UUID) -> Player? = { id -> if (id == player.uuid) player else null }
+
+        assertEquals(
+            emptyList(),
+            TriggerEngine(target, { null }, Policy(), { listOf(binding) })
+                .accept(input(player.uuid, 1)),
+        )
+        assertEquals(
+            listOf(0),
+            TriggerEngine(target, resolver, Policy(), { listOf(binding) })
+                .accept(input(player.uuid, 1))
+                .map { it.key.bindingIndex },
+        )
+        assertEquals(
+            emptyList(),
+            TriggerEngine(instance(), resolver, Policy(), { listOf(binding) })
+                .accept(input(player.uuid, 1)),
+        )
+        assertEquals(
+            emptyList(),
+            TriggerEngine(target, resolver, Policy(eligible = false), { listOf(binding) })
+                .accept(input(player.uuid, 1)),
+        )
+    }
+
     private fun binding(debounce: Long = 0, cooldown: Long = 0) =
         TriggerBinding(
             SceneTrigger.LEFT_CLICK,
@@ -104,13 +138,21 @@ class SceneTriggerPipelineTest {
             acceptedNanos,
         )
 
-    private fun player(): Player {
+    private fun instance(): Instance {
         MinecraftServer.init()
-        return Player(Connection(), GameProfile(UUID.randomUUID(), "test"))
+        return MinecraftServer.getInstanceManager().createInstanceContainer()
     }
 
-    private class Policy(private val permissions: Set<String> = emptySet()) : ScenePlayerPolicy {
-        override fun isEligible(player: Player) = true
+    private fun player(instance: Instance): Player =
+        Player(Connection(), GameProfile(UUID.randomUUID(), "test")).also {
+            it.setInstance(instance, Pos.ZERO).join()
+        }
+
+    private class Policy(
+        private val permissions: Set<String> = emptySet(),
+        private val eligible: Boolean = true,
+    ) : ScenePlayerPolicy {
+        override fun isEligible(player: Player) = eligible
 
         override fun hasPermission(player: Player, permission: String) = permission in permissions
     }

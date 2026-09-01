@@ -7,24 +7,17 @@ import net.minestom.server.entity.Player
 import net.minestom.server.instance.Instance
 
 internal class TriggerEngine(
+    private val instance: Instance,
     private val playerResolver: (java.util.UUID) -> Player?,
     playerPolicy: ScenePlayerPolicy,
     private val bindingsFor: (LocalId) -> List<TriggerBinding>,
-    private val instance: Instance? = null,
     private val stateStore: BindingStateStore = BindingStateStore(),
 ) {
     private val conditionEvaluator = ConditionEvaluator(playerPolicy)
 
-    constructor(
-        instance: Instance,
-        playerResolver: (java.util.UUID) -> Player?,
-        playerPolicy: ScenePlayerPolicy,
-        bindingsFor: (LocalId) -> List<TriggerBinding>,
-    ) : this(playerResolver, playerPolicy, bindingsFor, instance)
-
     fun accept(input: SceneTriggerInput): List<PendingActionChain> {
         val player = playerResolver(input.playerId) ?: return emptyList()
-        if (instance != null && player.instance !== instance) return emptyList()
+        if (player.instance !== instance) return emptyList()
         if (!conditionEvaluatorPolicyEligible(player)) return emptyList()
         val normalizedInput =
             if (input.trigger == gg.grounds.scene.format.SceneTrigger.LEFT_CLICK) {
