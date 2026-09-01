@@ -74,6 +74,12 @@ internal class LookController(
         }
     }
 
+    /** Drops concrete-handle rotation state so a later activation starts from authored rotation. */
+    fun removeElement(elementId: gg.grounds.scene.format.LocalId) {
+        updatedAt.remove(elementId)
+        rotations.remove(elementId)
+    }
+
     private fun distanceSquared(player: Player, x: Double, y: Double, z: Double): Double {
         val dx = player.position.x() - x
         val dy = player.position.y() + player.eyeHeight - y

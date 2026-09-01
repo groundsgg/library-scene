@@ -24,7 +24,6 @@ internal class NpcSensorEngine(
 
     fun update(players: List<Player>, activeNpcs: List<ActiveElement>): List<SensorTransition> {
         val npcs = activeNpcs.mapNotNull { active -> active.npc?.let { active to it } }
-        val activeIds = npcs.map { it.first.elementId }.toSet()
         val transitions = mutableListOf<SensorTransition>()
         players
             .sortedBy { it.uuid.toString() }
@@ -85,7 +84,6 @@ internal class NpcSensorEngine(
                             )
                     }
                 }
-                nearby.removeIf { it.playerId == player.uuid && it.elementId !in activeIds }
             }
         return transitions.sortedWith(
             compareBy<SensorTransition>(
