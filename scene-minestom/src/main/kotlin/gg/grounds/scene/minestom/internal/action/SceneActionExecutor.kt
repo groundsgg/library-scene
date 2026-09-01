@@ -13,6 +13,7 @@ import java.time.Duration
 import java.util.Collections
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
+import java.util.function.BiConsumer
 import net.kyori.adventure.title.Title
 import net.minestom.server.coordinate.Pos
 import net.minestom.server.instance.Instance
@@ -33,13 +34,22 @@ internal class SceneActionExecutor(
     private val effects: SceneEffectSink,
     private val actions: SceneActionRegistry,
     private val isCurrent: (PendingActionChain) -> Boolean,
+    private val schedule: (Runnable) -> Unit = { instance.scheduler().execute(it) },
+    private val registerCompletion:
+        (CompletionStage<SceneActionResult>, BiConsumer<SceneActionResult?, Throwable?>) -> Unit =
+        { stage, callback ->
+            stage.whenComplete(callback)
+        },
 ) {
     private val targets = ActionTargetResolver(elements, activeElements)
 
     fun execute(chain: PendingActionChain): CompletionStage<ChainOutcome> {
         val completion = CompletableFuture<ChainOutcome>()
-        if (!isCurrent(chain)) completion.complete(ChainOutcome.STALE)
-        else runNext(chain, 0, completion)
+        when (current(chain)) {
+            true -> runNext(chain, 0, completion)
+            false -> completion.complete(ChainOutcome.STALE)
+            null -> completion.complete(ChainOutcome.FAILED)
+        }
         return completion
     }
 
@@ -49,9 +59,16 @@ internal class SceneActionExecutor(
         completion: CompletableFuture<ChainOutcome>,
     ) {
         if (completion.isDone) return
-        if (!isCurrent(chain)) {
-            completion.complete(ChainOutcome.STALE)
-            return
+        when (current(chain)) {
+            false -> {
+                completion.complete(ChainOutcome.STALE)
+                return
+            }
+            null -> {
+                completion.complete(ChainOutcome.FAILED)
+                return
+            }
+            true -> Unit
         }
         val action = chain.actions.getOrNull(actionIndex)
         if (action == null) {
@@ -61,7 +78,7 @@ internal class SceneActionExecutor(
         if (action is ApplicationAction) executeApplication(chain, actionIndex, action, completion)
         else {
             val outcome =
-                runCatching { executeSafe(chain, action) }.fold({ null }, { ChainOutcome.FAILED })
+                runCatching { executeSafe(chain, action) }.getOrElse { ChainOutcome.FAILED }
             if (outcome != null) completion.complete(outcome)
             else runNext(chain, actionIndex + 1, completion)
         }
@@ -94,32 +111,51 @@ internal class SceneActionExecutor(
                 actions.handlerFor(action.key)?.execute(context)
                     ?: throw IllegalStateException("No handler for ${action.key.value}.")
             } catch (_: Throwable) {
-                completion.complete(ChainOutcome.FAILED)
+                completeFailureOrStale(chain, completion)
                 return
             }
-        stage.whenComplete { result, failure ->
-            instance.scheduler().execute {
-                if (completion.isDone) return@execute
-                if (!isCurrent(chain)) {
-                    completion.complete(ChainOutcome.STALE)
-                    return@execute
-                }
-                when {
-                    failure != null -> completion.complete(ChainOutcome.FAILED)
-                    result is SceneActionResult.Success ->
-                        runNext(chain, actionIndex + 1, completion)
-                    result is SceneActionResult.Rejected ->
-                        completion.complete(ChainOutcome.REJECTED)
-                    else -> completion.complete(ChainOutcome.FAILED)
-                }
-            }
+        try {
+            registerCompletion(
+                stage,
+                BiConsumer { result, failure ->
+                    try {
+                        schedule(
+                            Runnable {
+                                if (completion.isDone) return@Runnable
+                                when (current(chain)) {
+                                    false -> {
+                                        completion.complete(ChainOutcome.STALE)
+                                        return@Runnable
+                                    }
+                                    null -> {
+                                        completion.complete(ChainOutcome.FAILED)
+                                        return@Runnable
+                                    }
+                                    true -> Unit
+                                }
+                                when {
+                                    failure != null -> completion.complete(ChainOutcome.FAILED)
+                                    result is SceneActionResult.Success ->
+                                        runNext(chain, actionIndex + 1, completion)
+                                    result is SceneActionResult.Rejected ->
+                                        completion.complete(ChainOutcome.REJECTED)
+                                    else -> completion.complete(ChainOutcome.FAILED)
+                                }
+                            }
+                        )
+                    } catch (_: Throwable) {
+                        completeFailureOrStale(chain, completion)
+                    }
+                },
+            )
+        } catch (_: Throwable) {
+            completeFailureOrStale(chain, completion)
         }
     }
 
-    private fun executeSafe(chain: PendingActionChain, action: SceneAction) {
+    private fun executeSafe(chain: PendingActionChain, action: SceneAction): ChainOutcome? {
         val player = instance.getPlayerByUuid(chain.input.playerId)
-        if (player == null || player.instance !== instance)
-            throw IllegalStateException("Player is stale.")
+        if (player == null || player.instance !== instance) return ChainOutcome.STALE
         when (action) {
             is StartAnimationAction -> {
                 val target = requireTarget(action.target)
@@ -177,7 +213,20 @@ internal class SceneActionExecutor(
                 )
             is ApplicationAction -> error("Application actions are asynchronous.")
         }
+        return null
     }
+
+    private fun completeFailureOrStale(
+        chain: PendingActionChain,
+        completion: CompletableFuture<ChainOutcome>,
+    ) {
+        completion.complete(
+            if (current(chain) == false) ChainOutcome.STALE else ChainOutcome.FAILED
+        )
+    }
+
+    private fun current(chain: PendingActionChain): Boolean? =
+        runCatching { isCurrent(chain) }.getOrNull()
 
     private fun requireTarget(target: ElementTarget): ResolvedActionTarget =
         targets.resolve(target)

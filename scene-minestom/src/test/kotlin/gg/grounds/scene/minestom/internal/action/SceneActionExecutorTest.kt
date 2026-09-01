@@ -10,6 +10,8 @@ import java.net.InetSocketAddress
 import java.net.SocketAddress
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CompletionStage
+import java.util.function.BiConsumer
 import kotlin.test.*
 import net.kyori.adventure.text.Component
 import net.minestom.server.MinecraftServer
@@ -229,7 +231,7 @@ class SceneActionExecutorTest {
         val instance = instance()
         val player = player(instance)
         val first = CompletableFuture<SceneActionResult>()
-        var current = true
+        var elementGeneration = 1L
         val effects = RecordingEffects()
         val executor =
             executor(
@@ -238,19 +240,101 @@ class SceneActionExecutorTest {
                 emptyMap(),
                 effects = effects,
                 actions = SceneActionRegistry { SceneActionHandler { first } },
-                isCurrent = { current },
+                isCurrent = { pending -> pending.generation == elementGeneration },
             )
 
         val outcome =
             executor.execute(
                 chain(player, application(), PlaySoundAction(AssetKey("test:sound"), 1.0, 1.0))
             )
-        current = false
+        elementGeneration++
         first.complete(SceneActionResult.Success)
         tick(instance)
 
         assertEquals(ChainOutcome.STALE, outcome.await())
         assertTrue(effects.sounds.isEmpty())
+    }
+
+    @Test
+    fun `player disappearance after an action starts is stale with no later side effect`() {
+        val instance = instance()
+        val player = player(instance)
+        val first = CompletableFuture<SceneActionResult>()
+        val effects = RecordingEffects()
+        val executor =
+            executor(
+                instance,
+                player,
+                emptyMap(),
+                effects = effects,
+                actions = SceneActionRegistry { SceneActionHandler { first } },
+            )
+
+        val outcome =
+            executor.execute(
+                chain(player, application(), PlaySoundAction(AssetKey("test:sound"), 1.0, 1.0))
+            )
+        player.remove()
+        first.complete(SceneActionResult.Success)
+        tick(instance)
+
+        assertEquals(ChainOutcome.STALE, outcome.await())
+        assertTrue(effects.sounds.isEmpty())
+    }
+
+    @Test
+    fun `synchronous handler registration and scheduler failures resolve returned completion`() {
+        val instance = instance()
+        val player = player(instance)
+        val throwingHandler =
+            executor(
+                instance,
+                player,
+                emptyMap(),
+                actions =
+                    SceneActionRegistry {
+                        SceneActionHandler { throw IllegalStateException("handler") }
+                    },
+            )
+        val registrationFailure =
+            executor(
+                instance,
+                player,
+                emptyMap(),
+                actions =
+                    SceneActionRegistry {
+                        SceneActionHandler {
+                            CompletableFuture.completedFuture(SceneActionResult.Success)
+                        }
+                    },
+                registerCompletion = { _, _ -> throw IllegalStateException("registration") },
+            )
+        val schedulerFailure =
+            executor(
+                instance,
+                player,
+                emptyMap(),
+                actions =
+                    SceneActionRegistry {
+                        SceneActionHandler {
+                            CompletableFuture.completedFuture(SceneActionResult.Success)
+                        }
+                    },
+                schedule = { throw IllegalStateException("scheduler") },
+            )
+
+        assertEquals(
+            ChainOutcome.FAILED,
+            throwingHandler.execute(chain(player, application())).await(),
+        )
+        assertEquals(
+            ChainOutcome.FAILED,
+            registrationFailure.execute(chain(player, application())).await(),
+        )
+        assertEquals(
+            ChainOutcome.FAILED,
+            schedulerFailure.execute(chain(player, application())).await(),
+        )
     }
 
     private fun executor(
@@ -262,6 +346,14 @@ class SceneActionExecutorTest {
         effects: RecordingEffects = RecordingEffects(),
         actions: SceneActionRegistry = SceneActionRegistry { null },
         isCurrent: (PendingActionChain) -> Boolean = { true },
+        schedule: (Runnable) -> Unit = { instance.scheduler().execute(it) },
+        registerCompletion:
+            (
+                CompletionStage<SceneActionResult>, BiConsumer<SceneActionResult?, Throwable?>,
+            ) -> Unit =
+            { stage, callback ->
+                stage.whenComplete(callback)
+            },
     ) =
         SceneActionExecutor(
             instance,
@@ -272,6 +364,8 @@ class SceneActionExecutorTest {
             effects,
             actions,
             isCurrent,
+            schedule,
+            registerCompletion,
         )
 
     private fun chain(player: Player, vararg actions: SceneAction) =
