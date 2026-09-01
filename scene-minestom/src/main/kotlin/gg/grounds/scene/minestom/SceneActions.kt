@@ -25,6 +25,8 @@ data class SceneActionContext(
 
 sealed interface SceneActionResult {
     data object Success : SceneActionResult
+
     data class Rejected(val diagnostic: String) : SceneActionResult
+
     data class Failure(val diagnostic: String, val cause: Throwable? = null) : SceneActionResult
 }

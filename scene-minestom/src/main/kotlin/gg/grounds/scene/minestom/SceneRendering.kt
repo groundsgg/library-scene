@@ -6,7 +6,11 @@ import net.minestom.server.entity.Player
 import net.minestom.server.instance.Instance
 
 data class SceneRenderTransform(val root: Transform, val local: Transform?)
-data class SceneViewerVisualState(val scaleMultiplier: Double = 1.0, val highlighted: Boolean = false)
+
+data class SceneViewerVisualState(
+    val scaleMultiplier: Double = 1.0,
+    val highlighted: Boolean = false,
+)
 
 data class SceneAssetRenderContext(
     val instance: Instance,
@@ -26,10 +30,16 @@ fun interface SceneAssetRendererRegistry {
 
 interface RenderedAssetHandle : AutoCloseable {
     fun applyTransform(transform: SceneRenderTransform)
+
     fun applyViewerState(player: Player, state: SceneViewerVisualState)
+
     fun clearViewerState(player: Player)
+
     fun startAnimation(animation: LocalId, elapsedMillis: Long)
+
     fun stopAnimation(animation: LocalId?)
+
     fun advanceAnimation(elapsedMillis: Long)
+
     override fun close()
 }
