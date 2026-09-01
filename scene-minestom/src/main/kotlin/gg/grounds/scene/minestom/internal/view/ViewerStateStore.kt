@@ -24,6 +24,12 @@ internal class ViewerStateStore {
         states.keys.removeIf { it.playerId == playerId }
     }
 
+    fun keysForPlayer(playerId: UUID): List<ViewerElementKey> =
+        states.keys.filter { it.playerId == playerId }.sortedBy { it.elementId.value }
+
+    fun keysForElement(elementId: LocalId): List<ViewerElementKey> =
+        states.keys.filter { it.elementId == elementId }.sortedBy { it.playerId.toString() }
+
     fun apply(instance: Instance, active: ActiveElement, key: ViewerElementKey) {
         val player = instance.getPlayerByUuid(key.playerId) ?: return
         active.handles.forEach { it.applyViewerState(player, visualState(key)) }

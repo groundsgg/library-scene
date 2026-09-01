@@ -111,6 +111,11 @@ internal class NpcSensorEngine(
         )
     }
 
+    fun clear() {
+        hovered.clear()
+        nearby.clear()
+    }
+
     private fun Player.eyePosition() = Vec3(position.x(), position.y() + eyeHeight, position.z())
 
     private fun triggerOrder(trigger: SceneTrigger) =

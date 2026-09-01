@@ -31,6 +31,11 @@ internal class ActivationController(
     private val queued = mutableListOf<ActivationTransition>()
 
     fun evaluate(eligiblePlayerPositions: List<Point>): List<ActivationTransition> {
+        reevaluate(eligiblePlayerPositions)
+        return drainTransitions()
+    }
+
+    fun reevaluate(eligiblePlayerPositions: List<Point>) {
         val nearActivation =
             eligiblePlayerPositions
                 .flatMap { index.candidates(it, config.activationDistance) }
@@ -50,10 +55,10 @@ internal class ActivationController(
             }
         }
         queued.sortWith(transitionOrder)
-        return queued.take(config.transitionBudgetPerTick).also {
-            queued.subList(0, it.size).clear()
-        }
     }
+
+    fun drainTransitions(): List<ActivationTransition> =
+        queued.take(config.transitionBudgetPerTick).also { queued.subList(0, it.size).clear() }
 
     fun markActive(elementId: LocalId) {
         states[elementId] = RuntimeState.ACTIVE

@@ -29,6 +29,7 @@ internal class ElementActivator(
     private val instance: Instance,
     private val renderers: SceneAssetRendererRegistry,
     private val clock: SceneClock,
+    private val schedule: (Runnable) -> Unit = Runnable::run,
 ) {
     private val interactionIds = mutableMapOf<UUID, LocalId>()
 
@@ -44,8 +45,10 @@ internal class ElementActivator(
                 if (activation.attach(platformEntities)) {
                     platformEntities.setInstanceStages(npc).forEach { stage ->
                         stage.whenComplete { _, error ->
-                            if (error != null) activation.failed(error.unwrap())
-                            else activation.resourceCompleted()
+                            activation.schedule {
+                                if (error != null) activation.failed(error.unwrap())
+                                else activation.resourceCompleted()
+                            }
                         }
                     }
                 }
@@ -67,8 +70,10 @@ internal class ElementActivator(
                     return@forEachIndexed
                 }
             stage.whenComplete { handle, error ->
-                if (error != null) activation.failed(error.unwrap())
-                else activation.handleCompleted(index, handle)
+                activation.schedule {
+                    if (error != null) activation.failed(error.unwrap())
+                    else activation.handleCompleted(index, handle)
+                }
             }
         }
         if (requested.isEmpty() && npcElement == null) activation.completed()
@@ -205,6 +210,14 @@ internal class ElementActivator(
         fun resourceCompleted() = synchronized(this) { if (!terminal) resourceCompletedLocked() }
 
         fun completed() = synchronized(this) { if (!terminal) publishOrClose() }
+
+        fun schedule(action: () -> Unit) {
+            try {
+                schedule(Runnable(action))
+            } catch (error: Throwable) {
+                failed(error)
+            }
+        }
 
         fun failed(error: Throwable) {
             synchronized(this) {
