@@ -19,11 +19,45 @@ internal data class ViewerElementKey(
 )
 
 internal class ViewerStateStore(private val clock: SceneClock = SceneClock { System.nanoTime() }) {
-    private val states = mutableMapOf<ViewerElementKey, SceneViewerVisualState>()
+    private data class ScaleState(
+        val multiplier: Double,
+        val transition: SceneViewerScaleTransition?,
+    )
 
-    fun visualState(key: ViewerElementKey): SceneViewerVisualState {
-        val current = states[key] ?: return SceneViewerVisualState()
-        return evaluate(current, clock.nanoTime()).also { states[key] = it }
+    private data class HighlightState(
+        val highlighted: Boolean,
+        val transition: SceneViewerHighlightTransition?,
+    )
+
+    private val scales = mutableMapOf<ViewerElementKey, ScaleState>()
+    private val highlights = mutableMapOf<ViewerElementKey, HighlightState>()
+    private val activeTransitions = mutableSetOf<ViewerElementKey>()
+
+    fun visualState(key: ViewerElementKey): SceneViewerVisualState =
+        effectiveState(key.playerId, key.elementId, key.partId)
+
+    fun effectiveState(
+        playerId: UUID,
+        elementId: LocalId,
+        partId: LocalId?,
+    ): SceneViewerVisualState {
+        val key = ViewerElementKey(playerId, elementId, partId)
+        val root = ViewerElementKey(playerId, elementId)
+        val now = clock.nanoTime()
+        if (key != root) settle(root, now)
+        settle(key, now)
+        val scale = evaluateScale(scales[key] ?: scales[root] ?: ScaleState(1.0, null), now)
+        val highlight =
+            evaluateHighlight(
+                highlights[key] ?: highlights[root] ?: HighlightState(false, null),
+                now,
+            )
+        return SceneViewerVisualState(
+            scale.multiplier,
+            highlight.highlighted,
+            scale.transition,
+            highlight.transition,
+        )
     }
 
     fun setScale(
@@ -31,26 +65,25 @@ internal class ViewerStateStore(private val clock: SceneClock = SceneClock { Sys
         multiplier: Double,
         transitionMillis: Long = 0L,
     ): SceneViewerVisualState {
+        if (key.partId == null) clearPartOverrides(key.playerId, key.elementId, scales)
         val now = clock.nanoTime()
-        val current = evaluate(states[key] ?: SceneViewerVisualState(), now)
+        val current = effectiveState(key.playerId, key.elementId, key.partId)
         val duration = millisToNanosSaturated(transitionMillis)
-        val next =
-            if (duration == 0L) {
-                current.copy(scaleMultiplier = multiplier, scaleTransition = null)
-            } else {
-                current.copy(
-                    scaleTransition =
-                        SceneViewerScaleTransition(
-                            now,
-                            duration,
-                            current.scaleMultiplier,
-                            multiplier,
-                            current.scaleMultiplier,
-                        )
+        scales[key] =
+            if (duration == 0L) ScaleState(multiplier, null)
+            else
+                ScaleState(
+                    current.scaleMultiplier,
+                    SceneViewerScaleTransition(
+                        now,
+                        duration,
+                        current.scaleMultiplier,
+                        multiplier,
+                        current.scaleMultiplier,
+                    ),
                 )
-            }
-        states[key] = next
-        return next
+        syncTransition(key)
+        return effectiveState(key.playerId, key.elementId, key.partId)
     }
 
     fun setHighlight(
@@ -58,45 +91,46 @@ internal class ViewerStateStore(private val clock: SceneClock = SceneClock { Sys
         enabled: Boolean,
         transitionMillis: Long = 0L,
     ): SceneViewerVisualState {
+        if (key.partId == null) clearPartOverrides(key.playerId, key.elementId, highlights)
         val now = clock.nanoTime()
-        val current = evaluate(states[key] ?: SceneViewerVisualState(), now)
+        val current = effectiveState(key.playerId, key.elementId, key.partId)
         val duration = millisToNanosSaturated(transitionMillis)
-        val next =
-            if (duration == 0L) {
-                current.copy(highlighted = enabled, highlightTransition = null)
-            } else {
-                current.copy(
-                    highlightTransition =
-                        SceneViewerHighlightTransition(
-                            now,
-                            duration,
-                            current.highlighted,
-                            enabled,
-                            current.highlighted,
-                        )
+        highlights[key] =
+            if (duration == 0L) HighlightState(enabled, null)
+            else
+                HighlightState(
+                    current.highlighted,
+                    SceneViewerHighlightTransition(
+                        now,
+                        duration,
+                        current.highlighted,
+                        enabled,
+                        current.highlighted,
+                    ),
                 )
-            }
-        states[key] = next
-        return next
+        syncTransition(key)
+        return effectiveState(key.playerId, key.elementId, key.partId)
     }
 
     fun removePlayer(playerId: UUID) {
-        states.keys.removeIf { it.playerId == playerId }
+        scales.keys.removeIf { it.playerId == playerId }
+        highlights.keys.removeIf { it.playerId == playerId }
+        activeTransitions.removeIf { it.playerId == playerId }
     }
 
     fun keysForPlayer(playerId: UUID): List<ViewerElementKey> =
-        states.keys
-            .filter { it.playerId == playerId }
-            .sortedWith(compareBy({ it.elementId.value }, { it.partId?.value.orEmpty() }))
+        keys().filter { it.playerId == playerId }.sortedWith(keyOrder)
 
     fun keysForElement(elementId: LocalId): List<ViewerElementKey> =
-        states.keys
-            .filter { it.elementId == elementId }
-            .sortedWith(compareBy({ it.playerId.toString() }, { it.partId?.value.orEmpty() }))
+        keys().filter { it.elementId == elementId }.sortedWith(keyOrder)
 
     fun apply(instance: Instance, active: ActiveElement, key: ViewerElementKey) {
         val player = instance.getPlayerByUuid(key.playerId) ?: return
-        active.handlesFor(key.partId).forEach { it.applyViewerState(player, visualState(key)) }
+        active.handleEntries().forEach { (partId, handle) ->
+            if (key.partId == null || key.partId == partId) {
+                handle.applyViewerState(player, effectiveState(key.playerId, key.elementId, partId))
+            }
+        }
     }
 
     fun clear(instance: Instance, active: ActiveElement, key: ViewerElementKey) {
@@ -119,59 +153,101 @@ internal class ViewerStateStore(private val clock: SceneClock = SceneClock { Sys
         activeElements: Map<LocalId, ActiveElement>,
         onFailure: (ViewerElementKey, Throwable) -> Unit,
     ) {
-        states.keys
-            .sortedWith(
-                compareBy(
-                    { it.playerId.toString() },
-                    { it.elementId.value },
-                    { it.partId?.value.orEmpty() },
+        activeTransitions.sortedWith(keyOrder).forEach { key ->
+            settle(key, clock.nanoTime())
+            val active = activeElements[key.elementId] ?: return@forEach
+            try {
+                apply(instance, active, key)
+            } catch (error: Throwable) {
+                onFailure(key, error)
+            }
+        }
+    }
+
+    fun activeTransitionCount(): Int = activeTransitions.size
+
+    fun clear() {
+        scales.clear()
+        highlights.clear()
+        activeTransitions.clear()
+    }
+
+    private fun settle(key: ViewerElementKey, now: Long) {
+        scales[key]?.let { scale ->
+            val evaluated = evaluateScale(scale, now)
+            scales[key] =
+                if (
+                    evaluated.transition?.let {
+                        elapsedAtLeast(now, it.startedNanos, it.durationNanos)
+                    } == true
                 )
-            )
+                    ScaleState(evaluated.transition.target, null)
+                else evaluated
+        }
+        highlights[key]?.let { highlight ->
+            val evaluated = evaluateHighlight(highlight, now)
+            highlights[key] =
+                if (
+                    evaluated.transition?.let {
+                        elapsedAtLeast(now, it.startedNanos, it.durationNanos)
+                    } == true
+                )
+                    HighlightState(evaluated.transition.target, null)
+                else evaluated
+        }
+        syncTransition(key)
+    }
+
+    private fun syncTransition(key: ViewerElementKey) {
+        if (scales[key]?.transition != null || highlights[key]?.transition != null)
+            activeTransitions += key
+        else activeTransitions -= key
+    }
+
+    private fun <T> clearPartOverrides(
+        playerId: UUID,
+        elementId: LocalId,
+        overrides: MutableMap<ViewerElementKey, T>,
+    ) {
+        overrides.keys
+            .filter { it.playerId == playerId && it.elementId == elementId && it.partId != null }
             .forEach { key ->
-                val state = visualState(key)
-                if (state.scaleTransition == null && state.highlightTransition == null)
-                    return@forEach
-                val active = activeElements[key.elementId] ?: return@forEach
-                try {
-                    val player = instance.getPlayerByUuid(key.playerId) ?: return@forEach
-                    active.handlesFor(key.partId).forEach { it.applyViewerState(player, state) }
-                } catch (error: Throwable) {
-                    onFailure(key, error)
-                }
+                overrides.remove(key)
+                syncTransition(key)
             }
     }
 
-    fun clear() = states.clear()
+    private fun keys(): Set<ViewerElementKey> = scales.keys + highlights.keys
 
-    private fun evaluate(state: SceneViewerVisualState, now: Long): SceneViewerVisualState {
-        val scale =
-            state.scaleTransition?.let { transition ->
-                val current =
-                    if (elapsedAtLeast(now, transition.startedNanos, transition.durationNanos)) {
-                        transition.target
-                    } else {
-                        val progress =
-                            elapsedNanos(now, transition.startedNanos).toDouble() /
-                                transition.durationNanos.toDouble()
-                        transition.start + (transition.target - transition.start) * progress
-                    }
-                transition.copy(current = current)
+    private fun evaluateScale(state: ScaleState, now: Long): ScaleState {
+        val transition = state.transition ?: return state
+        val current =
+            if (elapsedAtLeast(now, transition.startedNanos, transition.durationNanos))
+                transition.target
+            else {
+                val progress =
+                    elapsedNanos(now, transition.startedNanos).toDouble() /
+                        transition.durationNanos.toDouble()
+                transition.start + (transition.target - transition.start) * progress
             }
-        val highlight =
-            state.highlightTransition?.let { transition ->
-                val current =
-                    if (elapsedAtLeast(now, transition.startedNanos, transition.durationNanos)) {
-                        transition.target
-                    } else {
-                        transition.start
-                    }
-                transition.copy(current = current)
-            }
-        return state.copy(
-            scaleMultiplier = scale?.current ?: state.scaleMultiplier,
-            highlighted = highlight?.current ?: state.highlighted,
-            scaleTransition = scale,
-            highlightTransition = highlight,
-        )
+        return ScaleState(current, transition.copy(current = current))
+    }
+
+    private fun evaluateHighlight(state: HighlightState, now: Long): HighlightState {
+        val transition = state.transition ?: return state
+        val current =
+            if (elapsedAtLeast(now, transition.startedNanos, transition.durationNanos))
+                transition.target
+            else transition.start
+        return HighlightState(current, transition.copy(current = current))
+    }
+
+    private companion object {
+        val keyOrder =
+            compareBy<ViewerElementKey>(
+                { it.playerId.toString() },
+                { it.elementId.value },
+                { it.partId?.value.orEmpty() },
+            )
     }
 }

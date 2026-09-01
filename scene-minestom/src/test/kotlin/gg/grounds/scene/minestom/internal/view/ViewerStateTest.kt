@@ -282,6 +282,40 @@ class ViewerStateTest {
     }
 
     @Test
+    fun `completed viewer transition sends one final update then retires`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val player = player(PLAYER_ONE, Pos.ZERO).also { it.setInstance(instance, Pos.ZERO).join() }
+        val clock = ManualClock()
+        val handle = RecordingHandle()
+        val active = ActiveElement(LocalId("prop"), 1L, listOf(handle), null)
+        val viewers = ViewerStateStore(clock)
+        val key = ViewerElementKey(player.uuid, active.elementId)
+        viewers.setScale(key, 2.0, 100)
+
+        clock.advanceMillis(100)
+        repeat(3) {
+            viewers.applyTransitions(instance, mapOf(active.elementId to active)) { _, error ->
+                throw error
+            }
+        }
+
+        assertEquals(1, handle.viewerUpdates.size)
+        assertEquals(2.0, handle.viewerUpdates.single().scaleMultiplier)
+        assertNull(viewers.visualState(key).scaleTransition)
+    }
+
+    @Test
+    fun `zero duration viewer state never enters transition pump`() {
+        val viewers = ViewerStateStore(ManualClock())
+        val key = ViewerElementKey(PLAYER_ONE, LocalId("prop"))
+
+        viewers.setScale(key, 2.0, 0)
+        viewers.setHighlight(key, true, 0)
+
+        assertEquals(0, viewers.activeTransitionCount())
+    }
+
+    @Test
     fun `look uses uuid tie yaw-only pitch and clock bounded turn`() {
         val clock = ManualClock()
         val lowerUuid = player(PLAYER_ONE, Pos(5.0, 0.0, 0.0))
@@ -456,6 +490,10 @@ class ViewerStateTest {
         fun advanceSeconds(seconds: Long) {
             now += seconds * 1_000_000_000L
         }
+
+        fun advanceMillis(millis: Long) {
+            now += millis * 1_000_000L
+        }
     }
 
     private class TestPlayer(id: UUID) : Player(TestConnection(), GameProfile(id, "test-player")) {
@@ -473,6 +511,7 @@ class ViewerStateTest {
     private class RecordingHandle : RenderedAssetHandle {
         val rotations = mutableListOf<EulerRotation>()
         val transforms = mutableListOf<SceneRenderTransform>()
+        val viewerUpdates = mutableListOf<SceneViewerVisualState>()
         var cleared = false
         var clearFailure: Throwable? = null
 
@@ -481,7 +520,9 @@ class ViewerStateTest {
             rotations += transform.root.rotation
         }
 
-        override fun applyViewerState(player: Player, state: SceneViewerVisualState) = Unit
+        override fun applyViewerState(player: Player, state: SceneViewerVisualState) {
+            viewerUpdates += state
+        }
 
         override fun clearViewerState(player: Player) {
             cleared = true

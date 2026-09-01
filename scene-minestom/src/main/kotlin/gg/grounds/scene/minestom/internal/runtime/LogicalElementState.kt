@@ -22,6 +22,7 @@ internal class LogicalElementState(
         animations[partId] ?: animations.getValue(null)
 
     fun setAnimation(partId: LocalId?, animation: LogicalAnimationState) {
+        if (partId == null) animations.keys.removeIf { it != null }
         animations[partId] = animation
     }
 }

@@ -105,6 +105,21 @@ class ElementActivatorTest {
     }
 
     @Test
+    fun `root animation clears part overrides live and after reactivation`() {
+        val factory = RecordingFactory()
+        val state = state(composite("a", "b"))
+        state.setAnimation(LocalId("b"), LogicalAnimationState(LocalId("part"), 2_000_000L))
+        state.setAnimation(null, LogicalAnimationState(LocalId("root"), 2_000_000L))
+
+        val activation = activator(factory).activate(state)
+        factory.completeAll()
+        activation.await()
+
+        assertEquals(listOf(LocalId("root") to 3L), factory.handles[0].startedAnimations)
+        assertEquals(listOf(LocalId("root") to 3L), factory.handles[1].startedAnimations)
+    }
+
+    @Test
     fun `activates npc body plus runtime owned label and interaction entities`() {
         val factory = RecordingFactory()
         val state =

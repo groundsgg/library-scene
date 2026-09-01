@@ -191,6 +191,184 @@ class SceneActionExecutorTest {
     }
 
     @Test
+    fun `root animation clears part overrides live`() {
+        val instance = instance()
+        val player = player(instance)
+        val element = state(composite("composite"))
+        val first = RecordingHandle()
+        val second = RecordingHandle()
+        element.setAnimation(LocalId("b"), LogicalAnimationState(LocalId("part"), 1L))
+
+        executor(
+                instance,
+                player,
+                mapOf(element.element.id to element),
+                mapOf(element.element.id to compositeActive(element, first, second)),
+            )
+            .execute(chain(player, StartAnimationAction(target("composite"), LocalId("root"))))
+            .await()
+
+        assertEquals(listOf(LocalId("root") to 0L), first.started)
+        assertEquals(listOf(LocalId("root") to 0L), second.started)
+        assertEquals(
+            LogicalAnimationState(LocalId("root"), 11L),
+            element.animationFor(LocalId("b")),
+        )
+    }
+
+    @Test
+    fun `root scale clears only part scale overrides and retains part highlights`() {
+        val instance = instance()
+        val player = player(instance)
+        val element = state(composite("composite"))
+        val first = RecordingHandle()
+        val second = RecordingHandle()
+        val viewers = ViewerStateStore()
+        val executor =
+            executor(
+                instance,
+                player,
+                mapOf(element.element.id to element),
+                mapOf(element.element.id to compositeActive(element, first, second)),
+                viewers = viewers,
+            )
+
+        executor
+            .execute(
+                chain(
+                    player,
+                    SetViewerScaleAction(ElementTarget(element.element.id, LocalId("b")), 2.0, 0),
+                    SetViewerHighlightAction(
+                        ElementTarget(element.element.id, LocalId("b")),
+                        true,
+                        0,
+                    ),
+                    SetViewerScaleAction(target("composite"), 3.0, 0),
+                )
+            )
+            .await()
+
+        assertEquals(
+            3.0,
+            viewers
+                .visualState(ViewerElementKey(player.uuid, element.element.id, LocalId("b")))
+                .scaleMultiplier,
+        )
+        assertTrue(
+            viewers
+                .visualState(ViewerElementKey(player.uuid, element.element.id, LocalId("b")))
+                .highlighted
+        )
+        assertEquals(3.0, second.viewerUpdates.last().second.scaleMultiplier)
+        assertTrue(second.viewerUpdates.last().second.highlighted)
+    }
+
+    @Test
+    fun `root highlight clears only part highlight overrides and retains part scales`() {
+        val instance = instance()
+        val player = player(instance)
+        val element = state(composite("composite"))
+        val first = RecordingHandle()
+        val second = RecordingHandle()
+        val viewers = ViewerStateStore()
+        val executor =
+            executor(
+                instance,
+                player,
+                mapOf(element.element.id to element),
+                mapOf(element.element.id to compositeActive(element, first, second)),
+                viewers = viewers,
+            )
+
+        executor
+            .execute(
+                chain(
+                    player,
+                    SetViewerScaleAction(ElementTarget(element.element.id, LocalId("b")), 2.0, 0),
+                    SetViewerHighlightAction(
+                        ElementTarget(element.element.id, LocalId("b")),
+                        true,
+                        0,
+                    ),
+                    SetViewerHighlightAction(target("composite"), false, 0),
+                )
+            )
+            .await()
+
+        assertEquals(
+            2.0,
+            viewers
+                .visualState(ViewerElementKey(player.uuid, element.element.id, LocalId("b")))
+                .scaleMultiplier,
+        )
+        assertFalse(
+            viewers
+                .visualState(ViewerElementKey(player.uuid, element.element.id, LocalId("b")))
+                .highlighted
+        )
+        assertEquals(2.0, second.viewerUpdates.last().second.scaleMultiplier)
+        assertFalse(second.viewerUpdates.last().second.highlighted)
+    }
+
+    @Test
+    fun `later part action overrides root only for that part`() {
+        val instance = instance()
+        val player = player(instance)
+        val element = state(composite("composite"))
+        val first = RecordingHandle()
+        val second = RecordingHandle()
+        val viewers = ViewerStateStore()
+
+        executor(
+                instance,
+                player,
+                mapOf(element.element.id to element),
+                mapOf(element.element.id to compositeActive(element, first, second)),
+                viewers = viewers,
+            )
+            .execute(
+                chain(
+                    player,
+                    SetViewerScaleAction(target("composite"), 3.0, 0),
+                    SetViewerScaleAction(ElementTarget(element.element.id, LocalId("b")), 4.0, 0),
+                )
+            )
+            .await()
+
+        assertEquals(3.0, first.viewerUpdates.last().second.scaleMultiplier)
+        assertEquals(4.0, second.viewerUpdates.last().second.scaleMultiplier)
+        assertEquals(
+            3.0,
+            viewers
+                .visualState(ViewerElementKey(player.uuid, element.element.id, LocalId("a")))
+                .scaleMultiplier,
+        )
+        assertEquals(
+            4.0,
+            viewers
+                .visualState(ViewerElementKey(player.uuid, element.element.id, LocalId("b")))
+                .scaleMultiplier,
+        )
+    }
+
+    @Test
+    fun `root viewer action clears overrides only for its triggering player`() {
+        val instance = instance()
+        val first = player(instance)
+        val second = player(instance)
+        val element = state(composite("composite"))
+        val viewers = ViewerStateStore()
+        val secondPart = ViewerElementKey(second.uuid, element.element.id, LocalId("b"))
+        viewers.setScale(secondPart, 2.0, 0)
+
+        executor(instance, first, mapOf(element.element.id to element), viewers = viewers)
+            .execute(chain(first, SetViewerScaleAction(target("composite"), 3.0, 0)))
+            .await()
+
+        assertEquals(2.0, viewers.visualState(secondPart).scaleMultiplier)
+    }
+
+    @Test
     fun `nonzero viewer transitions expose start duration target and clock driven current state`() {
         val instance = instance()
         val player = player(instance)
@@ -237,8 +415,9 @@ class SceneActionExecutorTest {
         val completed = viewers.visualState(key)
         assertEquals(3.0, completed.scaleMultiplier)
         assertTrue(completed.highlighted)
-        assertEquals(3.0, completed.scaleTransition!!.current)
-        assertEquals(true, completed.highlightTransition!!.current)
+        assertNull(completed.scaleTransition)
+        assertNull(completed.highlightTransition)
+        assertEquals(0, viewers.activeTransitionCount())
     }
 
     @Test
@@ -654,6 +833,21 @@ class SceneActionExecutorTest {
 
     private fun active(state: LogicalElementState, handle: RecordingHandle) =
         ActiveElement(state.element.id, state.generation, listOf(handle), null)
+
+    private fun compositeActive(
+        state: LogicalElementState,
+        first: RecordingHandle,
+        second: RecordingHandle,
+    ) =
+        ActiveElement(
+            state.element.id,
+            state.generation,
+            listOf(first, second),
+            null,
+            null,
+            emptyList(),
+            listOf(LocalId("a"), LocalId("b")),
+        )
 
     private fun prop(id: String, position: Vec3 = Vec3(0.0, 0.0, 0.0)) =
         Prop(

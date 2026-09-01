@@ -277,14 +277,14 @@ internal class SceneActionExecutor(
             is SetViewerScaleAction -> {
                 val target = requireTarget(action.target)
                 val key = ViewerElementKey(player.uuid, target.state.element.id, target.partId)
-                val state = viewers.setScale(key, action.multiplier, action.transitionMillis)
-                target.activeHandles.forEach { it.applyViewerState(player, state) }
+                viewers.setScale(key, action.multiplier, action.transitionMillis)
+                applyViewerState(target, key)
             }
             is SetViewerHighlightAction -> {
                 val target = requireTarget(action.target)
                 val key = ViewerElementKey(player.uuid, target.state.element.id, target.partId)
-                val state = viewers.setHighlight(key, action.enabled, action.transitionMillis)
-                target.activeHandles.forEach { it.applyViewerState(player, state) }
+                viewers.setHighlight(key, action.enabled, action.transitionMillis)
+                applyViewerState(target, key)
             }
             is PlaySoundAction ->
                 effects.playSound(player, action.sound, action.volume, action.pitch)
@@ -334,6 +334,12 @@ internal class SceneActionExecutor(
     private fun requireTarget(target: ElementTarget): ResolvedActionTarget =
         targets.resolve(target)
             ?: throw IllegalArgumentException("Invalid action target ${target.element.value}.")
+
+    private fun applyViewerState(target: ResolvedActionTarget, key: ViewerElementKey) {
+        activeElements[target.state.element.id]
+            ?.takeIf { it.generation == target.state.generation }
+            ?.let { viewers.apply(instance, it, key) }
+    }
 
     private fun report(
         chain: PendingActionChain,
