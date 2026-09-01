@@ -305,6 +305,37 @@ class ViewerStateTest {
     }
 
     @Test
+    fun `elapsed viewer state read retains transition ownership until final pump update`() {
+        MinecraftServer.init()
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val player = player(PLAYER_ONE, Pos.ZERO).also { it.setInstance(instance, Pos.ZERO).join() }
+        val clock = ManualClock()
+        val handle = RecordingHandle()
+        val active = ActiveElement(LocalId("prop"), 1L, listOf(handle), null)
+        val viewers = ViewerStateStore(clock)
+        val key = ViewerElementKey(player.uuid, active.elementId)
+        viewers.setScale(key, 2.0, 100)
+
+        clock.advanceMillis(100)
+        assertEquals(
+            2.0,
+            viewers.effectiveState(player.uuid, active.elementId, null).scaleMultiplier,
+        )
+        assertEquals(1, viewers.activeTransitionCount())
+
+        viewers.applyTransitions(instance, mapOf(active.elementId to active)) { _, error ->
+            throw error
+        }
+        assertEquals(listOf(2.0), handle.viewerUpdates.map { it.scaleMultiplier })
+        assertEquals(0, viewers.activeTransitionCount())
+
+        viewers.applyTransitions(instance, mapOf(active.elementId to active)) { _, error ->
+            throw error
+        }
+        assertEquals(listOf(2.0), handle.viewerUpdates.map { it.scaleMultiplier })
+    }
+
+    @Test
     fun `zero duration viewer state never enters transition pump`() {
         val viewers = ViewerStateStore(ManualClock())
         val key = ViewerElementKey(PLAYER_ONE, LocalId("prop"))

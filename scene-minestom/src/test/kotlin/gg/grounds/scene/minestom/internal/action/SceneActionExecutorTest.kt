@@ -415,9 +415,9 @@ class SceneActionExecutorTest {
         val completed = viewers.visualState(key)
         assertEquals(3.0, completed.scaleMultiplier)
         assertTrue(completed.highlighted)
-        assertNull(completed.scaleTransition)
-        assertNull(completed.highlightTransition)
-        assertEquals(0, viewers.activeTransitionCount())
+        assertEquals(3.0, completed.scaleTransition!!.current)
+        assertEquals(true, completed.highlightTransition!!.current)
+        assertEquals(1, viewers.activeTransitionCount())
     }
 
     @Test

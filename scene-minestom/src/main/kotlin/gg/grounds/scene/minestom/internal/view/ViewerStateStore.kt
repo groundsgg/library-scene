@@ -44,8 +44,6 @@ internal class ViewerStateStore(private val clock: SceneClock = SceneClock { Sys
         val key = ViewerElementKey(playerId, elementId, partId)
         val root = ViewerElementKey(playerId, elementId)
         val now = clock.nanoTime()
-        if (key != root) settle(root, now)
-        settle(key, now)
         val scale = evaluateScale(scales[key] ?: scales[root] ?: ScaleState(1.0, null), now)
         val highlight =
             evaluateHighlight(
