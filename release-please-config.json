@@ -1,5 +1,6 @@
 {
   "release-type": "java",
+  "skip-snapshot": true,
   "initial-version": "0.1.0",
   "include-component-in-tag": false,
   "packages": { ".": {} }
