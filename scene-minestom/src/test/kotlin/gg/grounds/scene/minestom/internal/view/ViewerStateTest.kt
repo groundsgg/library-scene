@@ -103,6 +103,73 @@ class ViewerStateTest {
     }
 
     @Test
+    fun `active proximity reconciliation does not scan retained memberships of inactive npcs`() {
+        val instance = instance()
+        val sensor = NpcSensorEngine(instance, AlwaysEligible)
+        val player =
+            player(PLAYER_ONE, Pos.ZERO).also { it.setInstance(instance, it.position).join() }
+        val retained =
+            List(200) { index -> proximityActive("inactive$index") }.onEach(sensor::activate)
+
+        assertEquals(200, sensor.update(listOf(player)).size)
+        retained.forEach { sensor.deactivate(it.elementId) }
+        repeat(3) { index -> sensor.activate(proximityActive("active$index")) }
+
+        assertEquals(3, sensor.update(listOf(player)).size)
+        assertEquals(0, sensor.proximityMembershipWorkCount())
+    }
+
+    @Test
+    fun `proximity tracker range is bounded at eight chunks without unsafe conversion`() {
+        val queries = MinestomSensorQueries(instance())
+
+        assertEquals(8, queries.proximityChunkRange(128.0))
+        assertNull(queries.proximityChunkRange(Math.nextUp(128.0)))
+        assertNull(queries.proximityChunkRange(Double.MAX_VALUE))
+    }
+
+    @Test
+    fun `proximity beyond tracker range exact scans supplied players in uuid order`() {
+        val instance = instance()
+        val sensor = NpcSensorEngine(instance, AlwaysEligible)
+        val lowerUuid =
+            player(PLAYER_ONE, Pos(127.0, 0.0, 0.0)).also {
+                it.setInstance(instance, it.position).join()
+            }
+        val higherUuid =
+            player(PLAYER_TWO, Pos(-127.0, 0.0, 0.0)).also {
+                it.setInstance(instance, it.position).join()
+            }
+        sensor.activate(proximityActive("wide", ProximitySensor(128.0, Math.nextUp(128.0))))
+
+        assertEquals(
+            listOf(
+                transition(PLAYER_ONE, "wide", SceneTrigger.PROXIMITY_ENTER),
+                transition(PLAYER_TWO, "wide", SceneTrigger.PROXIMITY_ENTER),
+            ),
+            sensor.update(listOf(higherUuid, lowerUuid)),
+        )
+    }
+
+    @Test
+    fun `huge finite proximity radius exact scans without chunk range overflow`() {
+        val instance = instance()
+        val sensor = NpcSensorEngine(instance, AlwaysEligible)
+        val player =
+            player(PLAYER_ONE, Pos(1_000_000.0, 100_000.0, -1_000_000.0)).also {
+                it.setInstance(instance, it.position).join()
+            }
+        sensor.activate(
+            proximityActive("huge", ProximitySensor(Double.MAX_VALUE / 2.0, Double.MAX_VALUE))
+        )
+
+        assertEquals(
+            listOf(transition(PLAYER_ONE, "huge", SceneTrigger.PROXIMITY_ENTER)),
+            sensor.update(listOf(player)),
+        )
+    }
+
+    @Test
     fun `sensor candidate work excludes distant Interaction chunks`() {
         val instance = instance()
         val sensor = NpcSensorEngine(instance, AlwaysEligible)
@@ -460,6 +527,14 @@ class ViewerStateTest {
             .setInstance(instance, npc.transform.position.let { Pos(it.x, it.y, it.z) })
             .join()
         return ActiveElement(npc.id, 1L, emptyList(), NpcPlatformEntities(null, interaction), npc)
+    }
+
+    private fun proximityActive(
+        id: String,
+        proximity: ProximitySensor = ProximitySensor(3.0, 4.0),
+    ): ActiveElement {
+        val npc = npc(id, proximity = proximity, visible = false)
+        return ActiveElement(npc.id, 1L, emptyList(), null, npc)
     }
 
     private fun instance() =

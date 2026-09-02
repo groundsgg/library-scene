@@ -9,6 +9,9 @@ import java.net.SocketAddress
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
@@ -285,6 +288,76 @@ class SceneRuntimeLifecycleIntegrationTest {
         tickUntil(instance) { renderer.handles.single().closed }
 
         tickUntil(instance) { renderer.createCalls == 2 }
+    }
+
+    @Test
+    fun `action continuation rejection reconciles on tick and permits retrigger`() {
+        val ownerThread = Thread.currentThread()
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val player =
+            Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
+                it.setInstance(instance, Pos.ZERO).join()
+            }
+        val renderer = ImmediateRenderer(instance)
+        val actions = RetriableActions()
+        val clock = ThreadCheckingClock(ownerThread)
+        val policy = ThreadCheckingPolicy(ownerThread)
+        val runtimeRequest =
+            request(instance, renderer, actions, playerPolicy = policy, clock = clock)
+        val rejectContinuations = AtomicBoolean()
+        val completionThread = AtomicReference<Thread>()
+        val rejectedSubmissions = AtomicInteger()
+        val creation =
+            DefaultSceneRuntime.create(
+                    runtimeRequest,
+                    checkNotNull(readiness(runtimeRequest).capabilities),
+                    schedule = { action ->
+                        if (
+                            rejectContinuations.get() &&
+                                Thread.currentThread() === completionThread.get()
+                        ) {
+                            rejectedSubmissions.incrementAndGet()
+                            throw IllegalStateException("transient owner scheduler rejection")
+                        }
+                        instance.scheduler().execute(action)
+                    },
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { creation.isDone }
+        val runtime = assertIs<SceneRuntimeCreationResult.Success>(creation.get()).runtime
+        val interaction = instance.entities.single { it.entityType == EntityType.INTERACTION }
+
+        instance
+            .eventNode()
+            .call(PlayerEntityInteractEvent(player, interaction, PlayerHand.OFF, Vec.ZERO))
+        assertEquals(1, actions.contexts.size)
+
+        rejectContinuations.set(true)
+        val foreignCompletion =
+            Thread.startVirtualThread {
+                completionThread.set(Thread.currentThread())
+                actions.completions.single().complete(SceneActionResult.Success)
+            }
+        foreignCompletion.join()
+        rejectContinuations.set(false)
+
+        assertEquals(2, rejectedSubmissions.get())
+        assertEquals(0, clock.offOwnerReads.get())
+        assertEquals(0, policy.offOwnerReads.get())
+        instance
+            .eventNode()
+            .call(PlayerEntityInteractEvent(player, interaction, PlayerHand.OFF, Vec.ZERO))
+        assertEquals(1, actions.contexts.size)
+
+        instance.tick(0)
+        instance
+            .eventNode()
+            .call(PlayerEntityInteractEvent(player, interaction, PlayerHand.OFF, Vec.ZERO))
+
+        assertEquals(2, actions.contexts.size)
+        assertEquals(0, clock.offOwnerReads.get())
+        assertEquals(0, policy.offOwnerReads.get())
+        runtime.close().toCompletableFuture().also { close -> tickUntil(instance) { close.isDone } }
     }
 
     @Test
@@ -630,6 +703,7 @@ class SceneRuntimeLifecycleIntegrationTest {
         config: SceneRuntimeConfig = SceneRuntimeConfig(),
         playerPolicy: ScenePlayerPolicy = AllowAllPlayers,
         assetCatalog: AssetCatalog = assets(),
+        clock: SceneClock = SceneClock { 1_000_000_000L },
     ) =
         SceneRuntimeRequest(
             scene = scene,
@@ -641,7 +715,7 @@ class SceneRuntimeLifecycleIntegrationTest {
             effects = NoEffects,
             playerPolicy = playerPolicy,
             actionRegistry = actions,
-            clock = SceneClock { 1_000_000_000L },
+            clock = clock,
             config = config,
         )
 
@@ -1087,6 +1161,37 @@ class SceneRuntimeLifecycleIntegrationTest {
                 CompletableFuture.completedFuture(SceneActionResult.Success)
             }
         }
+    }
+
+    private class RetriableActions : SceneActionRegistry {
+        val contexts = mutableListOf<SceneActionContext>()
+        val completions = mutableListOf<CompletableFuture<SceneActionResult>>()
+
+        override fun handlerFor(key: ActionKey): SceneActionHandler =
+            SceneActionHandler { context ->
+                contexts += context
+                CompletableFuture<SceneActionResult>().also(completions::add)
+            }
+    }
+
+    private class ThreadCheckingClock(private val ownerThread: Thread) : SceneClock {
+        val offOwnerReads = AtomicInteger()
+
+        override fun nanoTime(): Long {
+            if (Thread.currentThread() !== ownerThread) offOwnerReads.incrementAndGet()
+            return 1_000_000_000L
+        }
+    }
+
+    private class ThreadCheckingPolicy(private val ownerThread: Thread) : ScenePlayerPolicy {
+        val offOwnerReads = AtomicInteger()
+
+        override fun isEligible(player: Player): Boolean {
+            if (Thread.currentThread() !== ownerThread) offOwnerReads.incrementAndGet()
+            return true
+        }
+
+        override fun hasPermission(player: Player, permission: String) = true
     }
 
     private data object NoEffects : SceneEffectSink {

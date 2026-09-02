@@ -135,12 +135,10 @@ internal class ElementActivator(
             stage.whenComplete { handle, error ->
                 try {
                     val delivery = activation.recordDelivery(index, handle, error?.unwrap())
-                    if (delivery.accepted) {
-                        try {
-                            activation.schedule { activation.finishDelivery(delivery) }
-                        } catch (scheduleError: Throwable) {
-                            activation.failDelivery(delivery, scheduleError)
-                        }
+                    try {
+                        activation.schedule { activation.finishDelivery(delivery) }
+                    } catch (scheduleError: Throwable) {
+                        activation.failDelivery(delivery, scheduleError)
                     }
                 } catch (callbackError: Throwable) {
                     activation.failed(callbackError)
@@ -244,7 +242,16 @@ internal class ElementActivator(
 
     private data class RenderRequest(val kind: AssetKind, val context: SceneAssetRenderContext)
 
-    private data class Delivery(val failure: Throwable?, val accepted: Boolean)
+    private data class Delivery(
+        val handle: RenderedAssetHandle?,
+        val failure: Throwable?,
+        val accepted: Boolean,
+    )
+
+    private data class FallbackCleanup(
+        val npcEntities: NpcPlatformEntities?,
+        val handles: List<RenderedAssetHandle>,
+    )
 
     private inner class Activation(
         private val state: LogicalElementState,
@@ -263,38 +270,70 @@ internal class ElementActivator(
         private var terminalFailure: Throwable? = null
         private var published: ActiveElement? = null
 
-        fun recordDelivery(index: Int, handle: RenderedAssetHandle?, error: Throwable?): Delivery =
-            synchronized(this) {
-                if (terminal) {
-                    handle?.let { recordLateCleanup(closeOwnedResources(null, listOf(it))) }
-                    return@synchronized Delivery(error, false)
+        fun recordDelivery(index: Int, handle: RenderedAssetHandle?, error: Throwable?): Delivery {
+            val failure =
+                error
+                    ?: if (handle == null)
+                        IllegalStateException("Renderer stage completed with a null handle.")
+                    else null
+            return synchronized(this) {
+                if (terminal) Delivery(handle, failure, false)
+                else {
+                    if (handle != null) handles[index] = handle
+                    Delivery(handle, failure, true)
                 }
-                if (handle != null) handles[index] = handle
-                Delivery(
-                    error
-                        ?: if (handle == null)
-                            IllegalStateException("Renderer stage completed with a null handle.")
-                        else null,
-                    true,
-                )
             }
+        }
 
         fun finishDelivery(delivery: Delivery) {
+            if (!delivery.accepted) {
+                finishLateDelivery(delivery)
+                return
+            }
             synchronized(this) {
-                if (!delivery.accepted || terminal) return
+                if (terminal) {
+                    recordLateCleanup(delivery.failure)
+                    return
+                }
                 val failure = delivery.failure
                 if (failure != null) failLocked(failure) else resourceCompletedLocked()
             }
         }
 
         fun failDelivery(delivery: Delivery, scheduleError: Throwable) {
-            synchronized(this) {
-                if (!delivery.accepted || terminal) {
-                    recordLateCleanup(scheduleError)
-                    return
-                }
-                failLocked(delivery.failure.withSuppressed(scheduleError))
+            if (!delivery.accepted) {
+                finishLateDelivery(delivery, scheduleError)
+                return
             }
+            val failure = delivery.failure.withSuppressed(scheduleError)
+            val cleanup =
+                synchronized(this) {
+                    if (terminal) {
+                        recordLateCleanup(failure)
+                        return
+                    }
+                    terminal = true
+                    terminalFailure = failure
+                    FallbackCleanup(npc, handles.filterNotNull())
+                }
+            val completedFailure =
+                closeOwnedResources(cleanup.npcEntities, cleanup.handles, failure) ?: failure
+            synchronized(this) { terminalFailure = completedFailure }
+            future.completeExceptionally(completedFailure)
+        }
+
+        private fun finishLateDelivery(delivery: Delivery, scheduleError: Throwable? = null) {
+            val failure =
+                if (scheduleError == null) delivery.failure
+                else delivery.failure.withSuppressed(scheduleError)
+            val completedFailure =
+                closeOwnedResources(null, listOfNotNull(delivery.handle), failure)
+            synchronized(this) { recordLateCleanup(completedFailure) }
+        }
+
+        private fun recordLateCleanup(error: Throwable?) {
+            if (error == null) return
+            terminalFailure?.let { failure -> if (error !== failure) failure.addSuppressed(error) }
         }
 
         fun isOpen(): Boolean = synchronized(this) { !terminal }
@@ -408,11 +447,6 @@ internal class ElementActivator(
                 )
             if (retainUntilClaimed) published = active
             future.complete(active)
-        }
-
-        private fun recordLateCleanup(error: Throwable?) {
-            if (error == null) return
-            terminalFailure?.let { failure -> if (error !== failure) failure.addSuppressed(error) }
         }
     }
 }

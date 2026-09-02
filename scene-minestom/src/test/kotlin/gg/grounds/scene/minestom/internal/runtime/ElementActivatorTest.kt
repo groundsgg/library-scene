@@ -7,6 +7,7 @@ import java.lang.reflect.Proxy
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.ExecutionException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -358,12 +359,39 @@ class ElementActivatorTest {
                 )
                 .activate(state(prop()))
 
-        Thread.startVirtualThread { factory.complete(0) }.join()
+        val completionThread = Thread.startVirtualThread { factory.complete(0) }
+        completionThread.join()
 
         val failure = assertFailsWith<ExecutionException> { activation.await() }.cause
         assertSame(schedulerFailure, failure)
         assertEquals(1, factory.handles.single().closeCount)
+        assertSame(completionThread, factory.handles.single().closeThreads.single())
         assertTrue(activation.toCompletableFuture().isDone)
+    }
+
+    @Test
+    fun `handle delivered after ordinary abort closes on the owner scheduler`() {
+        val factory = RecordingFactory()
+        val scheduled = ConcurrentLinkedQueue<Runnable>()
+        val activation =
+            activator(SceneAssetRendererRegistry { _, _ -> factory }, schedule = scheduled::add)
+                .beginActivation(state(prop()))
+        assertNull(activation.abort())
+
+        val completionThread = Thread.startVirtualThread { factory.complete(0) }
+        completionThread.join()
+
+        val handle = factory.handles.single()
+        assertEquals(0, handle.closeCount)
+        val lateCleanup = assertNotNull(scheduled.poll())
+        assertNull(scheduled.poll())
+
+        val ownerThread = Thread.currentThread()
+        lateCleanup.run()
+
+        assertEquals(1, handle.closeCount)
+        assertSame(ownerThread, handle.closeThreads.single())
+        assertTrue(activation.stage.toCompletableFuture().isCompletedExceptionally)
     }
 
     private fun activator(factory: RecordingFactory): ElementActivator =
@@ -499,6 +527,7 @@ class ElementActivatorTest {
         var closed = false
         var closeCount = 0
         var closeFailure: Throwable? = null
+        val closeThreads = mutableListOf<Thread>()
         val startedAnimations = mutableListOf<Pair<LocalId, Long>>()
 
         override fun applyTransform(transform: SceneRenderTransform) = Unit
@@ -521,6 +550,7 @@ class ElementActivatorTest {
         override fun close() {
             closed = true
             closeCount++
+            closeThreads += Thread.currentThread()
             closeFailure?.let { throw it }
         }
     }

@@ -217,6 +217,60 @@ class SceneActionExecutorTest {
     }
 
     @Test
+    fun `root named stop mismatch does not broadcast to a matching part override`() {
+        val instance = instance()
+        val player = player(instance)
+        val element = state(composite("composite"))
+        val first = RecordingHandle()
+        val second = RecordingHandle()
+        element.setAnimation(null, LogicalAnimationState(LocalId("idle"), 1L))
+        element.setAnimation(LocalId("b"), LogicalAnimationState(LocalId("wave"), 2L))
+
+        val outcome =
+            executor(
+                    instance,
+                    player,
+                    mapOf(element.element.id to element),
+                    mapOf(element.element.id to compositeActive(element, first, second)),
+                )
+                .execute(chain(player, StopAnimationAction(target("composite"), LocalId("wave"))))
+                .await()
+
+        assertEquals(ChainOutcome.SUCCEEDED, outcome)
+        assertTrue(first.stopped.isEmpty())
+        assertTrue(second.stopped.isEmpty())
+        assertEquals(LogicalAnimationState(LocalId("idle"), 1L), element.animationFor(LocalId("a")))
+        assertEquals(LogicalAnimationState(LocalId("wave"), 2L), element.animationFor(LocalId("b")))
+    }
+
+    @Test
+    fun `matching root named stop stops each parts previously effective animation`() {
+        val instance = instance()
+        val player = player(instance)
+        val element = state(composite("composite"))
+        val first = RecordingHandle()
+        val second = RecordingHandle()
+        element.setAnimation(null, LogicalAnimationState(LocalId("idle"), 1L))
+        element.setAnimation(LocalId("b"), LogicalAnimationState(LocalId("wave"), 2L))
+
+        val outcome =
+            executor(
+                    instance,
+                    player,
+                    mapOf(element.element.id to element),
+                    mapOf(element.element.id to compositeActive(element, first, second)),
+                )
+                .execute(chain(player, StopAnimationAction(target("composite"), LocalId("idle"))))
+                .await()
+
+        assertEquals(ChainOutcome.SUCCEEDED, outcome)
+        assertEquals(listOf<LocalId?>(LocalId("idle")), first.stopped)
+        assertEquals(listOf<LocalId?>(LocalId("wave")), second.stopped)
+        assertEquals(LogicalAnimationState(null, null), element.animationFor(LocalId("a")))
+        assertEquals(LogicalAnimationState(null, null), element.animationFor(LocalId("b")))
+    }
+
+    @Test
     fun `root scale clears only part scale overrides and retains part highlights`() {
         val instance = instance()
         val player = player(instance)

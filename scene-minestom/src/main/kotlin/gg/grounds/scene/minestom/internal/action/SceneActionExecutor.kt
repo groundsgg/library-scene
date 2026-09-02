@@ -283,12 +283,30 @@ internal class SceneActionExecutor(
             }
             is StopAnimationAction -> {
                 val target = requireTarget(action.target)
-                if (
-                    action.animation == null ||
-                        target.state.animationFor(target.partId).animation == action.animation
-                )
-                    target.state.setAnimation(target.partId, LogicalAnimationState(null, null))
-                target.activeHandles.forEach { it.stopAnimation(action.animation) }
+                if (target.partId == null) {
+                    val rootAnimation = target.state.animationFor(null).animation
+                    if (action.animation == null || rootAnimation == action.animation) {
+                        val effectiveAnimations =
+                            activeElements[target.state.element.id]
+                                ?.takeIf { it.generation == target.state.generation }
+                                ?.handleEntries()
+                                ?.map { (partId, handle) ->
+                                    handle to target.state.animationFor(partId).animation
+                                }
+                                .orEmpty()
+                        target.state.setAnimation(null, LogicalAnimationState(null, null))
+                        effectiveAnimations.forEach { (handle, animation) ->
+                            handle.stopAnimation(animation)
+                        }
+                    }
+                } else {
+                    if (
+                        action.animation == null ||
+                            target.state.animationFor(target.partId).animation == action.animation
+                    )
+                        target.state.setAnimation(target.partId, LogicalAnimationState(null, null))
+                    target.activeHandles.forEach { it.stopAnimation(action.animation) }
+                }
             }
             is SetViewerScaleAction -> {
                 val target = requireTarget(action.target)

@@ -26,15 +26,27 @@ internal class MinestomSensorQueries(
             }
             .sortedBy(Entity::getUuid)
 
-    fun proximityPlayers(point: Point, radius: Double): List<Player> =
-        buildList {
+    fun proximityChunkRange(radius: Double): Int? {
+        val range = ceil(radius / 16.0)
+        if (!range.isFinite() || range < 0.0 || range > MAX_PROXIMITY_CHUNK_RANGE) return null
+        return range.toInt()
+    }
+
+    fun proximityPlayers(point: Point, radius: Double): List<Player>? {
+        val range = proximityChunkRange(radius) ?: return null
+        return buildList {
                 instance.getEntityTracker().nearbyEntitiesByChunkRange(
                     point,
-                    ceil(radius / 16.0).toInt(),
+                    range,
                     EntityTracker.Target.PLAYERS,
                 ) { player ->
                     add(player)
                 }
             }
             .sortedBy(Player::getUuid)
+    }
+
+    private companion object {
+        const val MAX_PROXIMITY_CHUNK_RANGE = 8
+    }
 }

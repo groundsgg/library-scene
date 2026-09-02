@@ -57,6 +57,7 @@ private constructor(
     private val activeElements = linkedMapOf<LocalId, ActiveElement>()
     private val pendingActivations = linkedMapOf<LocalId, PendingActivation>()
     private val rejectedActivations = ConcurrentLinkedQueue<RejectedActivation>()
+    private val rejectedActionChains = ConcurrentLinkedQueue<RejectedActionChain>()
     private val preparedLock = Any()
     private val preparedAlways = mutableListOf<PreparedActivation>()
     private val chainOwners = mutableMapOf<ChainId, ChainOwner>()
@@ -346,6 +347,7 @@ private constructor(
 
     private fun tickRuntime() {
         reconcileRejectedActivations()
+        reconcileRejectedActionChains()
         val players = request.instance.players.sortedBy { it.uuid.toString() }
         val eligible =
             players.filter { player ->
@@ -401,6 +403,24 @@ private constructor(
             if (pendingActivations.remove(rejected.elementId, rejected.pending)) {
                 spatial.retryActivation(rejected.elementId, rejected.pending.epoch)
             }
+        }
+    }
+
+    private fun reconcileRejectedActionChains() {
+        while (true) {
+            val rejected = rejectedActionChains.poll() ?: return
+            if (chainOwners[rejected.chainId] != rejected.owner) continue
+            if (runtimeGeneration != rejected.owner.runtimeGeneration) continue
+            val elementGeneration =
+                logicalStates[rejected.chainId.key.npcId]?.generation ?: continue
+            if (elementGeneration != rejected.owner.elementGeneration) continue
+            triggerEngine.complete(
+                rejected.chainId.key,
+                rejected.chainId.generation,
+                false,
+                request.clock.nanoTime(),
+            )
+            chainOwners.remove(rejected.chainId, rejected.owner)
         }
     }
 
@@ -572,7 +592,9 @@ private constructor(
         val state = logicalStates[input.npcId] ?: return
         triggerEngine.accept(input).forEach { chain ->
             val chainId = ChainId(chain.key, chain.generation)
-            chainOwners[chainId] = ChainOwner(runtimeGeneration, state.generation)
+            val owner = ChainOwner(runtimeGeneration, state.generation)
+            val rejectedChain = RejectedActionChain(chainId, owner)
+            chainOwners[chainId] = owner
             val completion =
                 try {
                     actionExecutor.execute(chain)
@@ -584,6 +606,7 @@ private constructor(
             completion.whenComplete { outcome, error ->
                 scheduleContinuation(
                     onRejected = { continuationError ->
+                        rejectedActionChains.add(rejectedChain)
                         val failure = error?.unwrap().withSuppressed(continuationError)
                         logFailure("CONTINUATION_SCHEDULE_FAILED", input.npcId, null, failure)
                     }
@@ -727,6 +750,7 @@ private constructor(
 
     private fun finishClose(completion: CompletableFuture<Void>) {
         rejectedActivations.clear()
+        rejectedActionChains.clear()
         pendingActivations.clear()
         logicalStates.clear()
         completion.complete(null)
@@ -827,6 +851,8 @@ private constructor(
     private data class ChainId(val key: BindingKey, val generation: Long)
 
     private data class ChainOwner(val runtimeGeneration: Long, val elementGeneration: Long)
+
+    private data class RejectedActionChain(val chainId: ChainId, val owner: ChainOwner)
 
     private data class PendingActivation(val epoch: Long, val activation: ElementActivation)
 

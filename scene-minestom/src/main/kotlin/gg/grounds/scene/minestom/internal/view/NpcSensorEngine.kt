@@ -25,11 +25,13 @@ internal class NpcSensorEngine(
     private val queries: MinestomSensorQueries = MinestomSensorQueries(instance, interactionReach),
 ) {
     private val hovered = mutableMapOf<UUID, LocalId>()
-    private val nearby = mutableSetOf<ViewerElementKey>()
+    private val proximityMembers = mutableMapOf<LocalId, MutableSet<UUID>>()
+    private val proximityElements = mutableMapOf<UUID, MutableSet<LocalId>>()
     private val active = mutableMapOf<LocalId, ActiveElement>()
     private val interactions = mutableMapOf<UUID, ActiveElement>()
     private val oversizedHover = mutableMapOf<LocalId, ActiveElement>()
     private var lastVisited = 0
+    private var lastProximityMembershipWork = 0
 
     fun activate(element: ActiveElement) {
         val npc = element.npc ?: return
@@ -99,6 +101,7 @@ internal class NpcSensorEngine(
                     else hovered[player.uuid] = newHover
                 }
             }
+        lastProximityMembershipWork = 0
         transitions += reconcileProximity(players)
         lastVisited = visited.size
         return transitions.sortedWith(
@@ -115,12 +118,15 @@ internal class NpcSensorEngine(
         hovered.remove(playerId)?.let {
             transitions += SensorTransition(playerId, it, SceneTrigger.HOVER_LEAVE)
         }
-        nearby
-            .filter { it.playerId == playerId }
-            .forEach { key ->
-                transitions +=
-                    SensorTransition(playerId, key.elementId, SceneTrigger.PROXIMITY_LEAVE)
-                nearby -= key
+        proximityElements
+            .remove(playerId)
+            .orEmpty()
+            .sortedBy { it.value }
+            .forEach { elementId ->
+                val members = proximityMembers[elementId] ?: return@forEach
+                if (!members.remove(playerId)) return@forEach
+                if (members.isEmpty()) proximityMembers.remove(elementId)
+                transitions += SensorTransition(playerId, elementId, SceneTrigger.PROXIMITY_LEAVE)
             }
         return transitions.sortedWith(
             compareBy({ it.elementId.value }, { triggerOrder(it.trigger) })
@@ -129,14 +135,18 @@ internal class NpcSensorEngine(
 
     fun clear() {
         hovered.clear()
-        nearby.clear()
+        proximityMembers.clear()
+        proximityElements.clear()
         active.clear()
         interactions.clear()
         oversizedHover.clear()
         lastVisited = 0
+        lastProximityMembershipWork = 0
     }
 
     fun visitedNpcCount(): Int = lastVisited
+
+    fun proximityMembershipWorkCount(): Int = lastProximityMembershipWork
 
     private fun hoverCandidates(
         player: Player,
@@ -163,19 +173,23 @@ internal class NpcSensorEngine(
                 val npc = element.npc ?: return@forEach
                 val sensor = npc.proximity ?: return@forEach
                 val point = element.currentTransform.root.position.asPoint()
-                val withinExit =
-                    queries.proximityPlayers(point, sensor.exitRadius).associateBy(Player::getUuid)
-                val relevantIds =
-                    (nearby.filter { it.elementId == element.elementId }.map { it.playerId } +
-                            withinExit.keys)
-                        .toSortedSet()
+                val candidates =
+                    (queries.proximityPlayers(point, sensor.exitRadius)
+                            ?: players
+                                .asSequence()
+                                .filter { it.instance === instance }
+                                .sortedBy(Player::getUuid)
+                                .toList())
+                        .associateBy(Player::getUuid)
+                val retainedIds = proximityMembers[element.elementId].orEmpty()
+                lastProximityMembershipWork += retainedIds.size
+                val relevantIds = (retainedIds + candidates.keys).toSortedSet()
                 relevantIds.forEach { playerId ->
                     val player = connected[playerId]
-                    val key = ViewerElementKey(playerId, element.elementId)
                     val eligible = player != null && playerPolicy.isEligible(player)
-                    val candidate = withinExit[playerId]
+                    val candidate = candidates[playerId]
                     if (!eligible || candidate == null) {
-                        if (nearby.remove(key))
+                        if (removeProximityMember(playerId, element.elementId))
                             add(
                                 SensorTransition(
                                     playerId,
@@ -187,11 +201,10 @@ internal class NpcSensorEngine(
                     }
                     val dx = candidate.position.x() - point.x
                     val dz = candidate.position.z() - point.z
-                    val distanceSquared = dx * dx + dz * dz
-                    if (
-                        key !in nearby && distanceSquared <= sensor.enterRadius * sensor.enterRadius
-                    ) {
-                        nearby += key
+                    val horizontalDistance = Math.hypot(dx, dz)
+                    val isNearby = playerId in proximityMembers[element.elementId].orEmpty()
+                    if (!isNearby && horizontalDistance <= sensor.enterRadius) {
+                        addProximityMember(playerId, element.elementId)
                         add(
                             SensorTransition(
                                 playerId,
@@ -199,10 +212,8 @@ internal class NpcSensorEngine(
                                 SceneTrigger.PROXIMITY_ENTER,
                             )
                         )
-                    } else if (
-                        key in nearby && distanceSquared > sensor.exitRadius * sensor.exitRadius
-                    ) {
-                        nearby -= key
+                    } else if (isNearby && horizontalDistance > sensor.exitRadius) {
+                        removeProximityMember(playerId, element.elementId)
                         add(
                             SensorTransition(
                                 playerId,
@@ -213,6 +224,23 @@ internal class NpcSensorEngine(
                     }
                 }
             }
+    }
+
+    private fun addProximityMember(playerId: UUID, elementId: LocalId): Boolean {
+        val added = proximityMembers.getOrPut(elementId, ::mutableSetOf).add(playerId)
+        if (added) proximityElements.getOrPut(playerId, ::mutableSetOf).add(elementId)
+        return added
+    }
+
+    private fun removeProximityMember(playerId: UUID, elementId: LocalId): Boolean {
+        val members = proximityMembers[elementId] ?: return false
+        if (!members.remove(playerId)) return false
+        if (members.isEmpty()) proximityMembers.remove(elementId)
+        proximityElements[playerId]?.let { elements ->
+            elements.remove(elementId)
+            if (elements.isEmpty()) proximityElements.remove(playerId)
+        }
+        return true
     }
 
     private fun Player.eyePosition() = Vec3(position.x(), position.y() + eyeHeight, position.z())
