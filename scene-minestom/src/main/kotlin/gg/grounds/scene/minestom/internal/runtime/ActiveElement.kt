@@ -27,7 +27,7 @@ internal class ActiveElement(
     private val handlePartIds: List<LocalId?> = List(handles.size) { null },
     initialTransform: SceneRenderTransform? = npc?.let { SceneRenderTransform(it.transform, null) },
     private val beginResourceOperation: () -> Unit = {},
-    private val completeResourceOperation: (Throwable?) -> Unit = { _ -> },
+    private val completeResourceOperation: (Throwable?, Boolean) -> Unit = { _, _ -> },
     private val runtimeClosing: () -> Boolean = { false },
     private val schedule: (Runnable) -> Unit = Runnable::run,
 ) : AutoCloseable {
@@ -128,15 +128,18 @@ internal class ActiveElement(
                                 if (closed.get() || runtimeClosing()) {
                                     closeOwnedResources(npcEntities, emptyList())
                                 } else null
-                            completeResourceOperation(stageError.withSuppressed(cleanupError))
+                            completeResourceOperation(
+                                stageError.withSuppressed(cleanupError),
+                                false,
+                            )
                         }
                     )
                 } catch (scheduleError: Throwable) {
-                    completeResourceOperation(stageError.withSuppressed(scheduleError))
+                    completeResourceOperation(stageError.withSuppressed(scheduleError), true)
                 }
             }
         } catch (error: Throwable) {
-            completeResourceOperation(error)
+            completeResourceOperation(error, false)
             throw error
         }
     }

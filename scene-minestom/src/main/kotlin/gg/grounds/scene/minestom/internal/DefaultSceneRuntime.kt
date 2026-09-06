@@ -750,17 +750,26 @@ private constructor(
     }
 
     private fun continueCloseAfterDrain(
-        drain: CompletionStage<Void>,
+        drain: CompletionStage<Pair<Throwable?, Boolean>>,
         completion: CompletableFuture<Void>,
     ) {
         try {
-            drain.whenComplete { _, drainError ->
-                val failure = drainError?.unwrap()
+            drain.whenComplete { result, drainError ->
+                val failure = drainError?.unwrap() ?: result?.first
                 try {
                     marshal(
                         Runnable {
                             failure?.let { logFailure("RESOURCE_DRAIN_FAILED", null, null, it) }
-                            finishClose(completion)
+                            if (drainError != null || result?.second == true) {
+                                completion.completeExceptionally(
+                                    failure
+                                        ?: IllegalStateException(
+                                            "Resource drain could not continue on the owner thread."
+                                        )
+                                )
+                            } else {
+                                finishClose(completion)
+                            }
                         }
                     )
                 } catch (scheduleError: Throwable) {

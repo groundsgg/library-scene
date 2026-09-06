@@ -46,7 +46,7 @@ internal class ElementActivator(
     private val interactionIds = mutableMapOf<UUID, LocalId>()
     private val resourceDrain = ResourceDrain()
 
-    fun beginCloseDrain(): CompletionStage<Void> = resourceDrain.beginClose()
+    fun beginCloseDrain(): CompletionStage<Pair<Throwable?, Boolean>> = resourceDrain.beginClose()
 
     fun activate(state: LogicalElementState): CompletionStage<ActiveElement> =
         startActivation(state, false).stage
@@ -131,17 +131,22 @@ internal class ElementActivator(
         try {
             stage.whenComplete { value, error ->
                 try {
-                    activation.schedule {
-                        try {
-                            callback(value, error)
-                        } finally {
-                            resourceDrain.completeOperation()
+                    schedule(
+                        Runnable {
+                            var callbackFailure: Throwable? = null
+                            try {
+                                callback(value, error)
+                            } catch (callbackError: Throwable) {
+                                callbackFailure = callbackError
+                                activation.failed(callbackError)
+                            } finally {
+                                resourceDrain.completeOperation(callbackFailure)
+                            }
                         }
-                    }
+                    )
                 } catch (scheduleError: Throwable) {
                     val failure = error?.unwrap().withSuppressed(scheduleError)
-                    activation.npcResourceCompleted(failure)
-                    resourceDrain.completeOperation(failure)
+                    resourceDrain.completeOperation(failure, closeMustFail = true)
                 }
             }
         } catch (error: Throwable) {
@@ -159,22 +164,24 @@ internal class ElementActivator(
         try {
             stage.whenComplete { handle, error ->
                 try {
-                    val delivery = activation.recordDelivery(index, handle, error?.unwrap())
-                    try {
-                        activation.schedule {
+                    schedule(
+                        Runnable {
+                            var callbackFailure: Throwable? = null
                             try {
+                                val delivery =
+                                    activation.recordDelivery(index, handle, error?.unwrap())
                                 activation.finishDelivery(delivery)
+                            } catch (callbackError: Throwable) {
+                                callbackFailure = callbackError
+                                activation.failed(callbackError)
                             } finally {
-                                resourceDrain.completeOperation()
+                                resourceDrain.completeOperation(callbackFailure)
                             }
                         }
-                    } catch (scheduleError: Throwable) {
-                        activation.failDelivery(delivery, scheduleError)
-                        resourceDrain.completeOperation()
-                    }
-                } catch (callbackError: Throwable) {
-                    activation.failed(callbackError)
-                    resourceDrain.completeOperation()
+                    )
+                } catch (scheduleError: Throwable) {
+                    val failure = error?.unwrap().withSuppressed(scheduleError)
+                    resourceDrain.completeOperation(failure, closeMustFail = true)
                 }
             }
         } catch (error: Throwable) {
@@ -275,11 +282,6 @@ internal class ElementActivator(
         val accepted: Boolean,
     )
 
-    private data class FallbackCleanup(
-        val npcEntities: NpcPlatformEntities?,
-        val handles: List<RenderedAssetHandle>,
-    )
-
     private inner class Activation(
         private val state: LogicalElementState,
         private val generation: Long,
@@ -330,34 +332,8 @@ internal class ElementActivator(
             }
         }
 
-        fun failDelivery(delivery: Delivery, scheduleError: Throwable) {
-            if (!delivery.accepted) {
-                finishLateDelivery(delivery, scheduleError)
-                return
-            }
-            val failure = delivery.failure.withSuppressed(scheduleError)
-            val cleanup =
-                synchronized(this) {
-                    if (terminal) {
-                        recordLateCleanup(failure)
-                        return
-                    }
-                    terminal = true
-                    val closeNpcNow = npcAttachmentStagesSettled()
-                    npcCleanupDeferred = !closeNpcNow && npc != null
-                    terminalFailure = failure
-                    FallbackCleanup(npc.takeIf { closeNpcNow }, handles.filterNotNull())
-                }
-            val completedFailure =
-                closeOwnedResources(cleanup.npcEntities, cleanup.handles, failure) ?: failure
-            synchronized(this) { terminalFailure = completedFailure }
-            future.completeExceptionally(completedFailure)
-        }
-
-        private fun finishLateDelivery(delivery: Delivery, scheduleError: Throwable? = null) {
-            val failure =
-                if (scheduleError == null) delivery.failure
-                else delivery.failure.withSuppressed(scheduleError)
+        private fun finishLateDelivery(delivery: Delivery) {
+            val failure = delivery.failure
             val completedFailure =
                 closeOwnedResources(null, listOfNotNull(delivery.handle), failure)
             synchronized(this) { recordLateCleanup(completedFailure) }
@@ -405,18 +381,6 @@ internal class ElementActivator(
             }
 
         fun completed() = synchronized(this) { if (!terminal) publishOrClose() }
-
-        fun schedule(action: () -> Unit) {
-            schedule(
-                Runnable {
-                    try {
-                        action()
-                    } catch (error: Throwable) {
-                        failed(error)
-                    }
-                }
-            )
-        }
 
         fun failed(error: Throwable) {
             synchronized(this) {
@@ -521,9 +485,10 @@ internal class ElementActivator(
     }
 
     private class ResourceDrain {
-        private val completion = CompletableFuture<Void>()
+        private val completion = CompletableFuture<Pair<Throwable?, Boolean>>()
         private var operations = 0
         private var closing = false
+        private var closeMustFail = false
 
         fun beginOperation() = synchronized(this) { operations++ }
 
@@ -532,33 +497,33 @@ internal class ElementActivator(
         fun recordFailure(error: Throwable) =
             synchronized(this) { if (closing) failure = failure.withSuppressed(error) }
 
-        fun completeOperation(error: Throwable? = null) {
+        fun completeOperation(error: Throwable? = null, closeMustFail: Boolean = false) {
             val outcome =
                 synchronized(this) {
-                    if (closing && error != null) failure = failure.withSuppressed(error)
+                    if ((closing || closeMustFail) && error != null) {
+                        failure = failure.withSuppressed(error)
+                    }
+                    if (closeMustFail) this.closeMustFail = true
                     operations--
                     check(operations >= 0) { "Resource operation completed without ownership." }
-                    if (closing && operations == 0) failure to true else null
+                    if (closing && operations == 0) resultLocked() else null
                 }
-            if (outcome != null) complete(outcome.first)
+            if (outcome != null) completion.complete(outcome)
         }
 
-        fun beginClose(): CompletionStage<Void> {
+        fun beginClose(): CompletionStage<Pair<Throwable?, Boolean>> {
             val outcome =
                 synchronized(this) {
                     closing = true
-                    failure.takeIf { operations == 0 } to (operations == 0)
+                    if (operations == 0) resultLocked() else null
                 }
-            if (outcome.second) complete(outcome.first)
+            if (outcome != null) completion.complete(outcome)
             return completion
         }
 
         fun isClosing(): Boolean = synchronized(this) { closing }
 
-        private fun complete(error: Throwable?) {
-            if (error == null) completion.complete(null)
-            else completion.completeExceptionally(error)
-        }
+        private fun resultLocked() = failure to closeMustFail
     }
 }
 

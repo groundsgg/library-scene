@@ -349,24 +349,24 @@ class ElementActivatorTest {
     }
 
     @Test
-    fun `scheduler rejection after handle delivery closes the handle and completes activation`() {
+    fun `scheduler rejection after handle delivery leaves cleanup to a failed runtime close`() {
         val factory = RecordingFactory()
         val schedulerFailure = IllegalStateException("owner scheduler rejected delivery")
-        val activation =
+        val activator =
             activator(
-                    SceneAssetRendererRegistry { _, _ -> factory },
-                    schedule = { throw schedulerFailure },
-                )
-                .activate(state(prop()))
+                SceneAssetRendererRegistry { _, _ -> factory },
+                schedule = { throw schedulerFailure },
+            )
+        val activation = activator.activate(state(prop()))
 
         val completionThread = Thread.startVirtualThread { factory.complete(0) }
         completionThread.join()
 
-        val failure = assertFailsWith<ExecutionException> { activation.await() }.cause
-        assertSame(schedulerFailure, failure)
-        assertEquals(1, factory.handles.single().closeCount)
-        assertSame(completionThread, factory.handles.single().closeThreads.single())
-        assertTrue(activation.toCompletableFuture().isDone)
+        val drain = activator.beginCloseDrain().toCompletableFuture().get()
+        assertSame(schedulerFailure, drain.first)
+        assertTrue(drain.second)
+        assertEquals(0, factory.handles.single().closeCount)
+        assertTrue(!activation.toCompletableFuture().isDone)
     }
 
     @Test
