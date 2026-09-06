@@ -745,7 +745,7 @@ private constructor(
                     logFailure("ELEMENT_CLOSE_FAILED", elementId, null, error)
                 }
             }
-        finishClose(completion)
+        activator.beginCloseDrain().whenComplete { _, _ -> finishClose(completion) }
     }
 
     private fun finishClose(completion: CompletableFuture<Void>) {

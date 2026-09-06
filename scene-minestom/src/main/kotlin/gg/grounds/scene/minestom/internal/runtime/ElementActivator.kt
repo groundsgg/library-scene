@@ -44,6 +44,9 @@ internal class ElementActivator(
     private val schedule: (Runnable) -> Unit = Runnable::run,
 ) {
     private val interactionIds = mutableMapOf<UUID, LocalId>()
+    private val resourceDrain = ResourceDrain()
+
+    fun beginCloseDrain(): CompletionStage<Void> = resourceDrain.beginClose()
 
     fun activate(state: LogicalElementState): CompletionStage<ActiveElement> =
         startActivation(state, false).stage
@@ -70,6 +73,9 @@ internal class ElementActivator(
                             observe(stage, activation) { _, error ->
                                 if (error != null) activation.failed(error.unwrap())
                                 else activation.resourceCompleted()
+                                if (activation.needsLateNpcCleanup()) {
+                                    activation.closeNpcEntitiesAfterLateAttachment()
+                                }
                             }
                         }
                     }
@@ -113,16 +119,25 @@ internal class ElementActivator(
         activation: Activation,
         callback: (T?, Throwable?) -> Unit,
     ) {
+        resourceDrain.beginOperation()
         try {
             stage.whenComplete { value, error ->
                 try {
-                    activation.schedule { callback(value, error) }
+                    activation.schedule {
+                        try {
+                            callback(value, error)
+                        } finally {
+                            resourceDrain.completeOperation()
+                        }
+                    }
                 } catch (scheduleError: Throwable) {
                     activation.failed(error?.unwrap().withSuppressed(scheduleError))
+                    resourceDrain.completeOperation()
                 }
             }
         } catch (error: Throwable) {
             activation.failed(error)
+            resourceDrain.completeOperation()
         }
     }
 
@@ -131,21 +146,31 @@ internal class ElementActivator(
         index: Int,
         activation: Activation,
     ) {
+        resourceDrain.beginOperation()
         try {
             stage.whenComplete { handle, error ->
                 try {
                     val delivery = activation.recordDelivery(index, handle, error?.unwrap())
                     try {
-                        activation.schedule { activation.finishDelivery(delivery) }
+                        activation.schedule {
+                            try {
+                                activation.finishDelivery(delivery)
+                            } finally {
+                                resourceDrain.completeOperation()
+                            }
+                        }
                     } catch (scheduleError: Throwable) {
                         activation.failDelivery(delivery, scheduleError)
+                        resourceDrain.completeOperation()
                     }
                 } catch (callbackError: Throwable) {
                     activation.failed(callbackError)
+                    resourceDrain.completeOperation()
                 }
             }
         } catch (error: Throwable) {
             activation.failed(error)
+            resourceDrain.completeOperation()
         }
     }
 
@@ -352,6 +377,11 @@ internal class ElementActivator(
 
         fun resourceCompleted() = synchronized(this) { if (!terminal) resourceCompletedLocked() }
 
+        fun needsLateNpcCleanup(): Boolean = synchronized(this) { terminalFailure != null }
+
+        fun closeNpcEntitiesAfterLateAttachment() =
+            synchronized(this) { closeOwnedResources(npc, emptyList())?.let(::recordLateCleanup) }
+
         fun completed() = synchronized(this) { if (!terminal) publishOrClose() }
 
         fun schedule(action: () -> Unit) {
@@ -444,10 +474,38 @@ internal class ElementActivator(
                     requests.map { it.context.transform },
                     requests.map { it.context.partId },
                     SceneRenderTransform(state.element.transform, null),
+                    resourceDrain::beginOperation,
+                    resourceDrain::completeOperation,
+                    resourceDrain::isClosing,
+                    schedule,
                 )
             if (retainUntilClaimed) published = active
             future.complete(active)
         }
+    }
+
+    private class ResourceDrain {
+        private val completion = CompletableFuture<Void>()
+        private var operations = 0
+        private var closing = false
+
+        fun beginOperation() = synchronized(this) { operations++ }
+
+        fun completeOperation() =
+            synchronized(this) {
+                operations--
+                check(operations >= 0) { "Resource operation completed without ownership." }
+                if (closing && operations == 0) completion.complete(null)
+            }
+
+        fun beginClose(): CompletionStage<Void> =
+            synchronized(this) {
+                closing = true
+                if (operations == 0) completion.complete(null)
+                completion
+            }
+
+        fun isClosing(): Boolean = synchronized(this) { closing }
     }
 }
 

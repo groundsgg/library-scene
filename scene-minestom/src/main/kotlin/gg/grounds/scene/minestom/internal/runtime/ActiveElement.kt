@@ -7,6 +7,7 @@ import gg.grounds.scene.minestom.SceneRenderTransform
 import gg.grounds.scene.minestom.internal.geometry.WorldBounds
 import gg.grounds.scene.minestom.internal.geometry.affine
 import gg.grounds.scene.minestom.internal.geometry.transformed
+import java.util.concurrent.CompletionStage
 import kotlin.math.max
 import net.minestom.server.coordinate.Pos
 import net.minestom.server.entity.metadata.other.InteractionMeta
@@ -24,8 +25,13 @@ internal class ActiveElement(
             .orEmpty(),
     private val handlePartIds: List<LocalId?> = List(handles.size) { null },
     initialTransform: SceneRenderTransform? = npc?.let { SceneRenderTransform(it.transform, null) },
+    private val beginResourceOperation: () -> Unit = {},
+    private val completeResourceOperation: () -> Unit = {},
+    private val runtimeClosing: () -> Boolean = { false },
+    private val schedule: (Runnable) -> Unit = Runnable::run,
 ) : AutoCloseable {
     private var runtimeTransform: SceneRenderTransform? = initialTransform
+    private var closed = false
 
     val currentTransform: SceneRenderTransform
         get() = checkNotNull(runtimeTransform) { "Active element has no runtime transform." }
@@ -75,13 +81,15 @@ internal class ActiveElement(
             val centerZ = (bounds.min.z + bounds.max.z) / 2.0
             if (entities.interaction.instance != null) {
                 attempt {
-                    entities.interaction.teleport(
-                        Pos(
-                            centerX,
-                            bounds.min.y,
-                            centerZ,
-                            transform.root.rotation.yaw.toFloat(),
-                            transform.root.rotation.pitch.toFloat(),
+                    observeNpcMove(
+                        entities.interaction.teleport(
+                            Pos(
+                                centerX,
+                                bounds.min.y,
+                                centerZ,
+                                transform.root.rotation.yaw.toFloat(),
+                                transform.root.rotation.pitch.toFloat(),
+                            )
                         )
                     )
                 }
@@ -91,13 +99,15 @@ internal class ActiveElement(
                 ?.let { label ->
                     val point = affine.transform(authoredNpc.labelOffset)
                     attempt {
-                        label.teleport(
-                            Pos(
-                                point.x,
-                                point.y,
-                                point.z,
-                                transform.root.rotation.yaw.toFloat(),
-                                transform.root.rotation.pitch.toFloat(),
+                        observeNpcMove(
+                            label.teleport(
+                                Pos(
+                                    point.x,
+                                    point.y,
+                                    point.z,
+                                    transform.root.rotation.yaw.toFloat(),
+                                    transform.root.rotation.pitch.toFloat(),
+                                )
                             )
                         )
                     }
@@ -106,7 +116,36 @@ internal class ActiveElement(
         failure?.let { throw it }
     }
 
+    private fun observeNpcMove(stage: CompletionStage<Void>) {
+        beginResourceOperation()
+        try {
+            stage.whenComplete { _, _ ->
+                try {
+                    schedule(
+                        Runnable {
+                            try {
+                                if (closed || runtimeClosing()) npcEntities?.close()
+                            } finally {
+                                completeResourceOperation()
+                            }
+                        }
+                    )
+                } catch (_: Throwable) {
+                    try {
+                        if (closed || runtimeClosing()) npcEntities?.close()
+                    } finally {
+                        completeResourceOperation()
+                    }
+                }
+            }
+        } catch (error: Throwable) {
+            completeResourceOperation()
+            throw error
+        }
+    }
+
     override fun close() {
+        closed = true
         closeOwnedResources(npcEntities, handles)?.let { throw it }
     }
 }

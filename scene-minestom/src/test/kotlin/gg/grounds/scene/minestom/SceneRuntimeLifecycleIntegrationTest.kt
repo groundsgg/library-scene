@@ -59,7 +59,7 @@ class SceneRuntimeLifecycleIntegrationTest {
     }
 
     @Test
-    fun `close aborts a never completing automatic activation and closes a late handle`() {
+    fun `close waits for a gated automatic renderer delivery to reclaim its late handle`() {
         val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
         Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
             it.setInstance(instance, Pos(0.0, 0.0, 0.0)).join()
@@ -78,12 +78,14 @@ class SceneRuntimeLifecycleIntegrationTest {
         val interaction = instance.entities.single { it.entityType == EntityType.INTERACTION }
         val close = runtime.close().toCompletableFuture()
 
-        tickUntil(instance) { close.isDone }
-        close.get()
+        instance.tick(0)
+        assertFalse(close.isDone)
         assertTrue(interaction.isRemoved)
 
         Thread.startVirtualThread { renderer.completion.complete(renderer.handle) }.join()
-        tickUntil(instance) { renderer.handle.closed }
+        tickUntil(instance) { close.isDone }
+        close.get()
+        assertTrue(renderer.handle.closed)
         assertTrue(renderer.handle.entitiesRemovedWhenClosed)
     }
 
