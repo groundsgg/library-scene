@@ -718,6 +718,7 @@ private constructor(
             return
         }
         closed = true
+        val drain = activator.beginCloseDrain()
         runtimeGeneration++
         logicalStates.values.forEach { it.generation++ }
         task?.cancel()
@@ -745,7 +746,33 @@ private constructor(
                     logFailure("ELEMENT_CLOSE_FAILED", elementId, null, error)
                 }
             }
-        activator.beginCloseDrain().whenComplete { _, _ -> finishClose(completion) }
+        continueCloseAfterDrain(drain, completion)
+    }
+
+    private fun continueCloseAfterDrain(
+        drain: CompletionStage<Void>,
+        completion: CompletableFuture<Void>,
+    ) {
+        try {
+            drain.whenComplete { _, drainError ->
+                val failure = drainError?.unwrap()
+                try {
+                    marshal(
+                        Runnable {
+                            failure?.let { logFailure("RESOURCE_DRAIN_FAILED", null, null, it) }
+                            finishClose(completion)
+                        }
+                    )
+                } catch (scheduleError: Throwable) {
+                    val combined = failure.withSuppressed(scheduleError)
+                    logFailure("CONTINUATION_SCHEDULE_FAILED", null, null, combined)
+                    completion.completeExceptionally(combined)
+                }
+            }
+        } catch (error: Throwable) {
+            logFailure("CONTINUATION_REGISTRATION_FAILED", null, null, error)
+            completion.completeExceptionally(error)
+        }
     }
 
     private fun finishClose(completion: CompletableFuture<Void>) {

@@ -8,6 +8,7 @@ import gg.grounds.scene.minestom.internal.geometry.WorldBounds
 import gg.grounds.scene.minestom.internal.geometry.affine
 import gg.grounds.scene.minestom.internal.geometry.transformed
 import java.util.concurrent.CompletionStage
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import net.minestom.server.coordinate.Pos
 import net.minestom.server.entity.metadata.other.InteractionMeta
@@ -26,12 +27,12 @@ internal class ActiveElement(
     private val handlePartIds: List<LocalId?> = List(handles.size) { null },
     initialTransform: SceneRenderTransform? = npc?.let { SceneRenderTransform(it.transform, null) },
     private val beginResourceOperation: () -> Unit = {},
-    private val completeResourceOperation: () -> Unit = {},
+    private val completeResourceOperation: (Throwable?) -> Unit = { _ -> },
     private val runtimeClosing: () -> Boolean = { false },
     private val schedule: (Runnable) -> Unit = Runnable::run,
 ) : AutoCloseable {
     private var runtimeTransform: SceneRenderTransform? = initialTransform
-    private var closed = false
+    private val closed = AtomicBoolean()
 
     val currentTransform: SceneRenderTransform
         get() = checkNotNull(runtimeTransform) { "Active element has no runtime transform." }
@@ -119,35 +120,38 @@ internal class ActiveElement(
     private fun observeNpcMove(stage: CompletionStage<Void>) {
         beginResourceOperation()
         try {
-            stage.whenComplete { _, _ ->
+            stage.whenComplete { _, stageError ->
                 try {
                     schedule(
                         Runnable {
-                            try {
-                                if (closed || runtimeClosing()) npcEntities?.close()
-                            } finally {
-                                completeResourceOperation()
-                            }
+                            val cleanupError =
+                                if (closed.get() || runtimeClosing()) {
+                                    closeOwnedResources(npcEntities, emptyList())
+                                } else null
+                            completeResourceOperation(stageError.withSuppressed(cleanupError))
                         }
                     )
-                } catch (_: Throwable) {
-                    try {
-                        if (closed || runtimeClosing()) npcEntities?.close()
-                    } finally {
-                        completeResourceOperation()
-                    }
+                } catch (scheduleError: Throwable) {
+                    completeResourceOperation(stageError.withSuppressed(scheduleError))
                 }
             }
         } catch (error: Throwable) {
-            completeResourceOperation()
+            completeResourceOperation(error)
             throw error
         }
     }
 
     override fun close() {
-        closed = true
+        closed.set(true)
         closeOwnedResources(npcEntities, handles)?.let { throw it }
     }
+}
+
+private fun Throwable?.withSuppressed(secondary: Throwable?): Throwable? {
+    if (secondary == null) return this
+    val primary = this ?: return secondary
+    if (secondary !== primary) primary.addSuppressed(secondary)
+    return primary
 }
 
 internal fun closeOwnedResources(

@@ -69,13 +69,21 @@ internal class ElementActivator(
                 try {
                     val platformEntities = createNpcEntities(npc)
                     if (activation.attach(platformEntities)) {
-                        platformEntities.setInstanceStages(npc).forEach { stage ->
-                            observe(stage, activation) { _, error ->
-                                if (error != null) activation.failed(error.unwrap())
-                                else activation.resourceCompleted()
-                                if (activation.needsLateNpcCleanup()) {
-                                    activation.closeNpcEntitiesAfterLateAttachment()
+                        platformEntities.instanceRequests(npc).forEach { (entity, position) ->
+                            if (!activation.isOpen()) return@forEach
+                            activation.beginNpcResource()
+                            val stage =
+                                try {
+                                    requireNotNull(entity.setInstance(instance, position)) {
+                                        "NPC entity attachment returned a null CompletionStage."
+                                    }
+                                } catch (error: Throwable) {
+                                    activation.npcResourceCompleted(error)
+                                    return@forEach
                                 }
+                            activation.trackNpcStage(stage)
+                            observe(stage, activation) { _, error ->
+                                activation.npcResourceCompleted(error?.unwrap())
                             }
                         }
                     }
@@ -131,13 +139,14 @@ internal class ElementActivator(
                         }
                     }
                 } catch (scheduleError: Throwable) {
-                    activation.failed(error?.unwrap().withSuppressed(scheduleError))
-                    resourceDrain.completeOperation()
+                    val failure = error?.unwrap().withSuppressed(scheduleError)
+                    activation.npcResourceCompleted(failure)
+                    resourceDrain.completeOperation(failure)
                 }
             }
         } catch (error: Throwable) {
-            activation.failed(error)
-            resourceDrain.completeOperation()
+            activation.npcResourceCompleted(error)
+            resourceDrain.completeOperation(error)
         }
     }
 
@@ -238,7 +247,9 @@ internal class ElementActivator(
         }
     }
 
-    private fun NpcPlatformEntities.setInstanceStages(npc: Npc): List<CompletionStage<Void>> {
+    private fun NpcPlatformEntities.instanceRequests(
+        npc: Npc
+    ): List<Pair<Entity, net.minestom.server.coordinate.Point>> {
         val transform = SceneRenderTransform(npc.transform, null)
         val bounds = npc.interactionBounds.transformed(transform.affine())
         val interactionPosition =
@@ -249,19 +260,10 @@ internal class ElementActivator(
                 )
                 .asPoint()
         return buildList {
-            label?.let {
-                add(
-                    it.setInstance(
-                        instance,
-                        transform.affine().transform(npc.labelOffset).asPoint(),
-                    )
-                )
-            }
-            add(interaction.setInstance(instance, interactionPosition))
+            label?.let { add(it to transform.affine().transform(npc.labelOffset).asPoint()) }
+            add(interaction to interactionPosition)
         }
     }
-
-    private fun NpcPlatformEntities.resourceCount() = if (label == null) 1 else 2
 
     private fun Vec3.asPoint() = Vec(x, y, z)
 
@@ -294,6 +296,9 @@ internal class ElementActivator(
         private var terminal = false
         private var terminalFailure: Throwable? = null
         private var published: ActiveElement? = null
+        private var pendingNpcResources = 0
+        private var npcCleanupDeferred = false
+        private val npcStages = mutableListOf<CompletionStage<Void>>()
 
         fun recordDelivery(index: Int, handle: RenderedAssetHandle?, error: Throwable?): Delivery {
             val failure =
@@ -338,8 +343,10 @@ internal class ElementActivator(
                         return
                     }
                     terminal = true
+                    val closeNpcNow = npcAttachmentStagesSettled()
+                    npcCleanupDeferred = !closeNpcNow && npc != null
                     terminalFailure = failure
-                    FallbackCleanup(npc, handles.filterNotNull())
+                    FallbackCleanup(npc.takeIf { closeNpcNow }, handles.filterNotNull())
                 }
             val completedFailure =
                 closeOwnedResources(cleanup.npcEntities, cleanup.handles, failure) ?: failure
@@ -358,6 +365,7 @@ internal class ElementActivator(
 
         private fun recordLateCleanup(error: Throwable?) {
             if (error == null) return
+            resourceDrain.recordFailure(error)
             terminalFailure?.let { failure -> if (error !== failure) failure.addSuppressed(error) }
         }
 
@@ -370,17 +378,31 @@ internal class ElementActivator(
                     false
                 } else {
                     npc = platformEntities
-                    pending += platformEntities.resourceCount()
                     true
                 }
             }
 
-        fun resourceCompleted() = synchronized(this) { if (!terminal) resourceCompletedLocked() }
+        fun beginNpcResource() =
+            synchronized(this) {
+                check(!terminal) { "NPC resource started after activation became terminal." }
+                pendingNpcResources++
+                pending++
+            }
 
-        fun needsLateNpcCleanup(): Boolean = synchronized(this) { terminalFailure != null }
+        fun trackNpcStage(stage: CompletionStage<Void>) = synchronized(this) { npcStages += stage }
 
-        fun closeNpcEntitiesAfterLateAttachment() =
-            synchronized(this) { closeOwnedResources(npc, emptyList())?.let(::recordLateCleanup) }
+        fun npcResourceCompleted(error: Throwable?) =
+            synchronized(this) {
+                check(pendingNpcResources > 0) { "NPC resource completed without ownership." }
+                pendingNpcResources--
+                if (!terminal) {
+                    if (error == null) resourceCompletedLocked() else failLocked(error)
+                }
+                if (terminal && npcCleanupDeferred && pendingNpcResources == 0) {
+                    npcCleanupDeferred = false
+                    closeOwnedResources(npc, emptyList())?.let(::recordLateCleanup)
+                }
+            }
 
         fun completed() = synchronized(this) { if (!terminal) publishOrClose() }
 
@@ -420,8 +442,14 @@ internal class ElementActivator(
                 if (terminal) return@synchronized null
                 val cancellation = CancellationException("Element activation was aborted.")
                 terminal = true
+                val closeNpcNow = npcAttachmentStagesSettled()
+                npcCleanupDeferred = !closeNpcNow && npc != null
                 terminalFailure =
-                    closeOwnedResources(npc, handles.filterNotNull(), cancellation) ?: cancellation
+                    closeOwnedResources(
+                        npc.takeIf { closeNpcNow },
+                        handles.filterNotNull(),
+                        cancellation,
+                    ) ?: cancellation
                 future.completeExceptionally(terminalFailure)
                 terminalFailure?.takeIf { it.suppressed.isNotEmpty() }
             }
@@ -433,9 +461,17 @@ internal class ElementActivator(
 
         private fun failLocked(error: Throwable) {
             terminal = true
-            terminalFailure = closeOwnedResources(npc, handles.filterNotNull(), error) ?: error
+            val closeNpcNow = npcAttachmentStagesSettled()
+            npcCleanupDeferred = !closeNpcNow && npc != null
+            terminalFailure =
+                closeOwnedResources(npc.takeIf { closeNpcNow }, handles.filterNotNull(), error)
+                    ?: error
             future.completeExceptionally(terminalFailure)
         }
+
+        private fun npcAttachmentStagesSettled(): Boolean =
+            pendingNpcResources == 0 ||
+                (npcStages.isNotEmpty() && npcStages.all { it.toCompletableFuture().isDone })
 
         private fun publishOrClose() {
             if (terminal) return
@@ -491,21 +527,38 @@ internal class ElementActivator(
 
         fun beginOperation() = synchronized(this) { operations++ }
 
-        fun completeOperation() =
-            synchronized(this) {
-                operations--
-                check(operations >= 0) { "Resource operation completed without ownership." }
-                if (closing && operations == 0) completion.complete(null)
-            }
+        private var failure: Throwable? = null
 
-        fun beginClose(): CompletionStage<Void> =
-            synchronized(this) {
-                closing = true
-                if (operations == 0) completion.complete(null)
-                completion
-            }
+        fun recordFailure(error: Throwable) =
+            synchronized(this) { if (closing) failure = failure.withSuppressed(error) }
+
+        fun completeOperation(error: Throwable? = null) {
+            val outcome =
+                synchronized(this) {
+                    if (closing && error != null) failure = failure.withSuppressed(error)
+                    operations--
+                    check(operations >= 0) { "Resource operation completed without ownership." }
+                    if (closing && operations == 0) failure to true else null
+                }
+            if (outcome != null) complete(outcome.first)
+        }
+
+        fun beginClose(): CompletionStage<Void> {
+            val outcome =
+                synchronized(this) {
+                    closing = true
+                    failure.takeIf { operations == 0 } to (operations == 0)
+                }
+            if (outcome.second) complete(outcome.first)
+            return completion
+        }
 
         fun isClosing(): Boolean = synchronized(this) { closing }
+
+        private fun complete(error: Throwable?) {
+            if (error == null) completion.complete(null)
+            else completion.completeExceptionally(error)
+        }
     }
 }
 
