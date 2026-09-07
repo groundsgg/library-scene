@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/groundsgg/library-scene/compare/v0.2.0...v0.2.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* **scene:** drain asynchronous attachments on close ([#7](https://github.com/groundsgg/library-scene/issues/7)) ([0ff2bc8](https://github.com/groundsgg/library-scene/commit/0ff2bc8a28c32cf98eb14a0de51475227d73fd9e))
+
 ## [0.2.0](https://github.com/groundsgg/library-scene/compare/v0.1.0...v0.2.0) (2026-09-02)
 
 
