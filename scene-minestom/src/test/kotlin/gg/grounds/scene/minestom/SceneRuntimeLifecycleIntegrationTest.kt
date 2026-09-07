@@ -9,24 +9,36 @@ import java.net.SocketAddress
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import net.kyori.adventure.text.Component
 import net.minestom.server.MinecraftServer
 import net.minestom.server.coordinate.Pos
 import net.minestom.server.coordinate.Vec
+import net.minestom.server.entity.Entity
 import net.minestom.server.entity.EntityType
 import net.minestom.server.entity.Player
 import net.minestom.server.entity.PlayerHand
 import net.minestom.server.event.entity.EntityAttackEvent
+import net.minestom.server.event.entity.EntityDespawnEvent
+import net.minestom.server.event.instance.InstanceChunkLoadEvent
 import net.minestom.server.event.player.PlayerDisconnectEvent
 import net.minestom.server.event.player.PlayerEntityInteractEvent
+import net.minestom.server.instance.Chunk
+import net.minestom.server.instance.ChunkLoader
 import net.minestom.server.instance.Instance
+import net.minestom.server.instance.InstanceContainer
 import net.minestom.server.network.packet.server.SendablePacket
 import net.minestom.server.network.player.GameProfile
 import net.minestom.server.network.player.PlayerConnection
@@ -59,7 +71,7 @@ class SceneRuntimeLifecycleIntegrationTest {
     }
 
     @Test
-    fun `close aborts a never completing automatic activation and closes a late handle`() {
+    fun `close waits for a gated automatic renderer delivery to reclaim its late handle`() {
         val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
         Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
             it.setInstance(instance, Pos(0.0, 0.0, 0.0)).join()
@@ -78,13 +90,303 @@ class SceneRuntimeLifecycleIntegrationTest {
         val interaction = instance.entities.single { it.entityType == EntityType.INTERACTION }
         val close = runtime.close().toCompletableFuture()
 
-        tickUntil(instance) { close.isDone }
-        close.get()
+        instance.tick(0)
+        assertFalse(close.isDone)
         assertTrue(interaction.isRemoved)
 
         Thread.startVirtualThread { renderer.completion.complete(renderer.handle) }.join()
-        tickUntil(instance) { renderer.handle.closed }
+        tickUntil(instance) { close.isDone }
+        close.get()
+        assertTrue(renderer.handle.closed)
         assertTrue(renderer.handle.entitiesRemovedWhenClosed)
+    }
+
+    @Test
+    fun `close drains a real renderer entity attachment in a distant chunk`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
+            it.setInstance(instance, Pos.ZERO).join()
+        }
+        val gate = ChunkGate(20, 20).also { it.install(instance) }
+        val renderer = EntityAttachingRenderer(instance, Pos(320.0, 2.0, 320.0))
+        val creation =
+            SceneRuntimeFactory.create(
+                    request(
+                        instance,
+                        renderer,
+                        RecordingActions(),
+                        scene = automaticPropScene(),
+                        assetCatalog = propAssets(),
+                    )
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { creation.isDone }
+        val runtime = assertIs<SceneRuntimeCreationResult.Success>(creation.get()).runtime
+
+        assertTrue(gate.entered.await(5, TimeUnit.SECONDS))
+        val close = runtime.close().toCompletableFuture()
+        instance.tick(0)
+        assertFalse(close.isDone)
+
+        gate.close()
+        gate.settled.awaitReady()
+        tickUntil(instance) { close.isDone }
+        close.get()
+
+        assertTrue(renderer.handle.closed)
+        assertTrue(renderer.display.isRemoved)
+        assertTrue(instance.entities.none { it === renderer.display })
+        val registeredAfterClose = instance.entities.toSet()
+        instance.tick(0)
+        assertEquals(registeredAfterClose, instance.entities.toSet())
+    }
+
+    @Test
+    fun `close drains distinct chunk npc attachments before reporting cleanup`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
+            it.setInstance(instance, Pos.ZERO).join()
+        }
+        val gate = ChunkGate(0, 21, 20, 0).also { it.install(instance) }
+        val renderer = ImmediateRenderer(instance)
+        val npc = scene().elements.single() as Npc
+        val automaticNpc =
+            Npc(
+                npc.id,
+                npc.group,
+                Transform(Vec3(0.0, 0.0, 0.0), EulerRotation(0.0, 0.0, 0.0), Vec3(1.0, 1.0, 1.0)),
+                npc.visible,
+                ActivationPolicy.AUTOMATIC,
+                npc.body,
+                Component.text("Guide"),
+                Vec3(320.0, 2.0, 0.0),
+                LookBehavior.Fixed,
+                npc.initialAnimation,
+                LocalBounds(Vec3(0.5, 0.0, 336.0), Vec3(1.5, 2.0, 337.0)),
+                npc.proximity,
+                npc.bindings,
+            )
+        val base = scene()
+        val automaticScene =
+            SceneDocument(
+                base.schemaVersion,
+                base.id,
+                base.metadata,
+                base.catalogs,
+                base.groups,
+                listOf(automaticNpc),
+            )
+        val creation =
+            SceneRuntimeFactory.create(
+                    request(instance, renderer, RecordingActions(), scene = automaticScene)
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { creation.isDone }
+        val runtime = assertIs<SceneRuntimeCreationResult.Success>(creation.get()).runtime
+
+        tickUntil(instance) { renderer.contexts.isNotEmpty() }
+        assertTrue(
+            gate.entered.await(5, TimeUnit.SECONDS),
+            "Timed out waiting for chunk boundary; requested=${gate.requested}; " +
+                "entities=${instance.entities.map { it.entityType to it.position }}",
+        )
+        gate.observedSettled.awaitReady()
+        val label = instance.entities.single { it.entityType == EntityType.TEXT_DISPLAY }
+        assertEquals(20, label.position.chunkX())
+        assertTrue(gate.requested.contains(0 to 21))
+        val close = runtime.close().toCompletableFuture()
+        instance.tick(0)
+        assertFalse(close.isDone)
+
+        gate.close()
+        gate.settled.awaitReady()
+        tickUntil(instance) { close.isDone }
+        close.get()
+
+        assertTrue(
+            instance.entities.none { it === label || it.entityType == EntityType.INTERACTION }
+        )
+        val registeredAfterClose = instance.entities.toSet()
+        instance.tick(0)
+        assertEquals(registeredAfterClose, instance.entities.toSet())
+    }
+
+    @Test
+    fun `rejected foreign npc attachment continuation fails close without off-owner cleanup`() {
+        val ownerThread = Thread.currentThread()
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
+            it.setInstance(instance, Pos.ZERO).join()
+        }
+        val gate = ChunkGate(0, 21, 20, 0).also { it.install(instance) }
+        val renderer = ImmediateRenderer(instance)
+        val npc = scene().elements.single() as Npc
+        val automaticNpc =
+            Npc(
+                npc.id,
+                npc.group,
+                Transform(Vec3(0.0, 0.0, 0.0), EulerRotation(0.0, 0.0, 0.0), Vec3(1.0, 1.0, 1.0)),
+                npc.visible,
+                ActivationPolicy.AUTOMATIC,
+                npc.body,
+                Component.text("Guide"),
+                Vec3(320.0, 2.0, 0.0),
+                npc.look,
+                npc.initialAnimation,
+                LocalBounds(Vec3(0.5, 0.0, 336.0), Vec3(1.5, 2.0, 337.0)),
+                npc.proximity,
+                npc.bindings,
+            )
+        val base = scene()
+        val automaticScene =
+            SceneDocument(
+                base.schemaVersion,
+                base.id,
+                base.metadata,
+                base.catalogs,
+                base.groups,
+                listOf(automaticNpc),
+            )
+        val schedulerFailure = IllegalStateException("transient owner scheduler rejection")
+        val rejected = AtomicBoolean()
+        val failures = mutableListOf<Triple<String, Throwable, Thread>>()
+        val despawnThreads = mutableListOf<Thread>()
+        instance.eventNode().addListener(EntityDespawnEvent::class.java) {
+            despawnThreads += Thread.currentThread()
+        }
+        val runtimeRequest = request(instance, renderer, RecordingActions(), scene = automaticScene)
+        val creation =
+            DefaultSceneRuntime.create(
+                    runtimeRequest,
+                    checkNotNull(readiness(runtimeRequest).capabilities),
+                    schedule = { action ->
+                        if (
+                            Thread.currentThread() !== ownerThread &&
+                                rejected.compareAndSet(false, true)
+                        ) {
+                            throw schedulerFailure
+                        }
+                        instance.scheduler().execute(action)
+                    },
+                    failureObserver = { code, error ->
+                        failures += Triple(code, error, Thread.currentThread())
+                    },
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { creation.isDone }
+        val runtime = assertIs<SceneRuntimeCreationResult.Success>(creation.get()).runtime
+        assertTrue(gate.entered.await(5, TimeUnit.SECONDS))
+
+        val close = runtime.close().toCompletableFuture()
+        instance.tick(0)
+        assertFalse(close.isDone)
+        gate.close()
+        gate.settled.awaitReady()
+        tickUntil(instance) { close.isDone }
+
+        val closeFailure = assertFailsWith<ExecutionException> { close.get() }.cause
+        assertSame(schedulerFailure, closeFailure)
+        assertTrue(rejected.get())
+        assertTrue(despawnThreads.all { it === ownerThread })
+        assertEquals(1, failures.size)
+        assertEquals("RESOURCE_DRAIN_FAILED", failures.single().first)
+        assertSame(schedulerFailure, failures.single().second)
+        assertSame(ownerThread, failures.single().third)
+        val platformEntities =
+            instance.entities.filter {
+                it.entityType == EntityType.TEXT_DISPLAY || it.entityType == EntityType.INTERACTION
+            }
+        assertEquals(2, platformEntities.size)
+        assertTrue(platformEntities.none { it.isRemoved })
+
+        platformEntities.forEach(Entity::remove)
+        assertTrue(despawnThreads.all { it === ownerThread })
+    }
+
+    @Test
+    fun `close drains an active tracked npc move before reporting cleanup`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
+            it.setInstance(instance, Pos(10.0, 0.0, 0.0)).join()
+        }
+        val renderer = ImmediateRenderer(instance)
+        val clock = MutableClock()
+        val initialPlatformChunks = CountDownLatch(2)
+        instance.eventNode().addListener(InstanceChunkLoadEvent::class.java) {
+            if ((it.chunk.chunkX == 20 || it.chunk.chunkX == 21) && it.chunk.chunkZ == 0) {
+                initialPlatformChunks.countDown()
+            }
+        }
+        val npc = scene().elements.single() as Npc
+        val trackedNpc =
+            Npc(
+                npc.id,
+                npc.group,
+                Transform(Vec3(0.0, 0.0, 0.0), EulerRotation(0.0, 0.0, 0.0), Vec3(1.0, 1.0, 1.0)),
+                npc.visible,
+                ActivationPolicy.ALWAYS,
+                npc.body,
+                Component.text("Guide"),
+                Vec3(320.0, 2.0, 0.0),
+                LookBehavior.TrackNearest(32.0, yawOnly = true, 180.0),
+                npc.initialAnimation,
+                LocalBounds(Vec3(336.0, 0.0, 0.5), Vec3(337.0, 2.0, 1.5)),
+                npc.proximity,
+                npc.bindings,
+            )
+        val base = scene()
+        val trackedScene =
+            SceneDocument(
+                base.schemaVersion,
+                base.id,
+                base.metadata,
+                base.catalogs,
+                base.groups,
+                listOf(trackedNpc),
+            )
+        val creation =
+            SceneRuntimeFactory.create(
+                    request(
+                        instance,
+                        renderer,
+                        RecordingActions(),
+                        scene = trackedScene,
+                        clock = clock,
+                    )
+                )
+                .toCompletableFuture()
+        instance.tick(0)
+        initialPlatformChunks.awaitReady()
+        tickUntil(instance) { creation.isDone }
+        val runtime = assertIs<SceneRuntimeCreationResult.Success>(creation.get()).runtime
+        val label = instance.entities.single { it.entityType == EntityType.TEXT_DISPLAY }
+        val interaction = instance.entities.single { it.entityType == EntityType.INTERACTION }
+        assertEquals(20, label.position.chunkX())
+        assertEquals(21, interaction.position.chunkX())
+
+        instance.tick(0)
+        val gate = ChunkGate(-1, 21, 0, 20).also { it.install(instance) }
+        clock.advanceSeconds(1)
+        instance.tick(0)
+        assertTrue(
+            gate.entered.await(5, TimeUnit.SECONDS),
+            "Timed out waiting for tracked move; requested=${gate.requested}; " +
+                "label=${label.position}; interaction=${interaction.position}",
+        )
+        gate.observedSettled.awaitReady()
+        val close = runtime.close().toCompletableFuture()
+        instance.tick(0)
+        assertFalse(close.isDone)
+
+        gate.close()
+        gate.settled.awaitReady()
+        tickUntil(instance) { close.isDone }
+        close.get()
+
+        assertTrue(instance.entities.none { it === label || it === interaction })
+        val registeredAfterClose = instance.entities.toSet()
+        instance.tick(0)
+        assertEquals(registeredAfterClose, instance.entities.toSet())
     }
 
     @Test
@@ -160,9 +462,17 @@ class SceneRuntimeLifecycleIntegrationTest {
     }
 
     @Test
-    fun `creation continuation rejection completes failure instead of hanging`() {
+    fun `creation renderer rejection completes structured failure without foreign cleanup`() {
+        val ownerThread = Thread.currentThread()
         val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
-        val renderer = RecordingRenderer(instance)
+        val gate = ChunkGate(20, 20).also { it.install(instance) }
+        val renderer = EntityAttachingRenderer(instance, Pos(320.0, 2.0, 320.0))
+        val clock = ThreadCheckingClock(ownerThread)
+        val policy = ThreadCheckingPolicy(ownerThread)
+        val despawnThreads = mutableListOf<Thread>()
+        instance.eventNode().addListener(EntityDespawnEvent::class.java) {
+            despawnThreads += Thread.currentThread()
+        }
         val runtimeRequest =
             request(
                 instance,
@@ -170,6 +480,8 @@ class SceneRuntimeLifecycleIntegrationTest {
                 RecordingActions(),
                 scene = alwaysPropScene(),
                 assetCatalog = propAssets(),
+                clock = clock,
+                playerPolicy = policy,
             )
         val readiness =
             SceneReadiness.prepare(
@@ -184,27 +496,47 @@ class SceneRuntimeLifecycleIntegrationTest {
                     runtimeRequest.config,
                 )
             )
-        var rejectContinuations = false
+        val rejectedSubmissions = AtomicInteger()
+        val failures = mutableListOf<Pair<String, Thread>>()
         val creation =
             DefaultSceneRuntime.create(
                     runtimeRequest,
                     checkNotNull(readiness.capabilities),
                     schedule = { action ->
-                        if (rejectContinuations)
+                        if (
+                            Thread.currentThread() !== ownerThread &&
+                                rejectedSubmissions.compareAndSet(0, 1)
+                        ) {
                             throw IllegalStateException("owner scheduler rejected continuation")
+                        }
                         instance.scheduler().execute(action)
                     },
+                    failureObserver = { code, _ -> failures += code to Thread.currentThread() },
                 )
                 .toCompletableFuture()
-        tickUntil(instance) { renderer.createCalls == 1 }
+        val creationCompletionThread = AtomicReference<Thread>()
+        creation.whenComplete { _, _ -> creationCompletionThread.set(Thread.currentThread()) }
+        instance.tick(0)
+        assertTrue(gate.entered.await(5, TimeUnit.SECONDS))
 
-        rejectContinuations = true
-        Thread.startVirtualThread { renderer.completion.complete(renderer.handle) }.join()
+        gate.close()
+        gate.settled.awaitReady()
+        tickUntil(instance) { creation.isDone }
 
-        assertTrue(creation.isDone)
         val failure = assertIs<SceneRuntimeCreationResult.Failure>(creation.get())
-        assertEquals(SceneRuntimeProblemCode.RUNTIME_FAILURE, failure.problems.single().code)
+        assertEquals(SceneRuntimeProblemCode.ACTIVATION_FAILED, failure.problems.single().code)
+        assertEquals(1, rejectedSubmissions.get())
         assertTrue(renderer.handle.closed)
+        assertEquals(listOf(ownerThread), renderer.handle.closeThreads)
+        assertTrue(renderer.display.isRemoved)
+        assertTrue(instance.entities.none { it === renderer.display })
+        assertTrue(despawnThreads.isNotEmpty())
+        assertTrue(despawnThreads.all { it === ownerThread })
+        assertSame(ownerThread, creationCompletionThread.get())
+        assertTrue(failures.isNotEmpty())
+        assertTrue(failures.all { it.second === ownerThread })
+        assertEquals(0, clock.offOwnerReads.get())
+        assertEquals(0, policy.offOwnerReads.get())
     }
 
     @Test
@@ -1030,6 +1362,48 @@ class SceneRuntimeLifecycleIntegrationTest {
         }
     }
 
+    private class EntityAttachingRenderer(
+        private val instance: Instance,
+        private val position: Pos,
+    ) : SceneAssetRendererRegistry, SceneAssetRendererFactory {
+        lateinit var display: Entity
+        lateinit var handle: EntityHandle
+
+        override fun rendererFor(asset: AssetKey, kind: AssetKind) = this
+
+        override fun create(
+            context: SceneAssetRenderContext
+        ): CompletionStage<RenderedAssetHandle> {
+            display = Entity(EntityType.TEXT_DISPLAY)
+            return display.setInstance(instance, position).thenApply {
+                EntityHandle(display).also { handle = it }
+            }
+        }
+    }
+
+    private class EntityHandle(private val entity: Entity) : RenderedAssetHandle {
+        var closed = false
+        val closeThreads = mutableListOf<Thread>()
+
+        override fun applyTransform(transform: SceneRenderTransform) = Unit
+
+        override fun applyViewerState(player: Player, state: SceneViewerVisualState) = Unit
+
+        override fun clearViewerState(player: Player) = Unit
+
+        override fun startAnimation(animation: LocalId, elapsedMillis: Long) = Unit
+
+        override fun stopAnimation(animation: LocalId?) = Unit
+
+        override fun advanceAnimation(elapsedMillis: Long) = Unit
+
+        override fun close() {
+            closed = true
+            closeThreads += Thread.currentThread()
+            entity.remove()
+        }
+    }
+
     private class SequencedRenderer(private val instance: Instance) :
         SceneAssetRendererRegistry, SceneAssetRendererFactory {
         val completions = mutableListOf<CompletableFuture<RenderedAssetHandle>>()
@@ -1183,6 +1557,16 @@ class SceneRuntimeLifecycleIntegrationTest {
         }
     }
 
+    private class MutableClock : SceneClock {
+        private var nanos = 0L
+
+        override fun nanoTime() = nanos
+
+        fun advanceSeconds(seconds: Long) {
+            nanos += TimeUnit.SECONDS.toNanos(seconds)
+        }
+    }
+
     private class ThreadCheckingPolicy(private val ownerThread: Thread) : ScenePlayerPolicy {
         val offOwnerReads = AtomicInteger()
 
@@ -1226,6 +1610,51 @@ class SceneRuntimeLifecycleIntegrationTest {
         override fun sendPacket(packet: SendablePacket) = Unit
 
         override fun getRemoteAddress(): SocketAddress = InetSocketAddress(0)
+    }
+
+    private class ChunkGate(
+        private val chunkX: Int,
+        private val chunkZ: Int,
+        private val observedX: Int = chunkX,
+        private val observedZ: Int = chunkZ,
+    ) : AutoCloseable {
+        val entered = CountDownLatch(1)
+        val settled = CountDownLatch(1)
+        val observedSettled = CountDownLatch(1)
+        val requested = ConcurrentLinkedQueue<Pair<Int, Int>>()
+        private val release = CompletableFuture<Unit>()
+
+        fun install(instance: InstanceContainer) {
+            instance.eventNode().addListener(InstanceChunkLoadEvent::class.java) {
+                if (it.chunk.chunkX == chunkX && it.chunk.chunkZ == chunkZ) settled.countDown()
+                if (it.chunk.chunkX == observedX && it.chunk.chunkZ == observedZ) {
+                    observedSettled.countDown()
+                }
+            }
+            instance.chunkLoader =
+                object : ChunkLoader {
+                    override fun supportsParallelLoading() = true
+
+                    override fun loadChunk(instance: Instance, x: Int, z: Int): Chunk? {
+                        requested += x to z
+                        if (x == chunkX && z == chunkZ) {
+                            entered.countDown()
+                            release.get(5, TimeUnit.SECONDS)
+                        }
+                        return null
+                    }
+
+                    override fun saveChunk(chunk: Chunk) = Unit
+                }
+        }
+
+        override fun close() {
+            release.complete(Unit)
+        }
+    }
+
+    private fun CountDownLatch.awaitReady() {
+        assertTrue(await(5, TimeUnit.SECONDS), "Timed out waiting for chunk boundary")
     }
 
     companion object {

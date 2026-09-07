@@ -173,7 +173,16 @@ private constructor(
             failInstallation(elementId, IllegalStateException("Activation desire is stale."))
             return
         }
-        val activation = activator.beginActivation(state)
+        val unscheduledFailure =
+            SceneRuntimeCreationResult.Failure(
+                listOf(runtimeProblem("Runtime installation continuation could not be scheduled."))
+            )
+        val activation =
+            activator.beginActivation(state) {
+                // No owner continuation was accepted. Only publish the thread-safe terminal
+                // result; owner-confined runtime state and resources must remain untouched.
+                creation.complete(unscheduledFailure)
+            }
         val stage = activation.stage
         try {
             stage.whenComplete { active, error ->
@@ -718,6 +727,7 @@ private constructor(
             return
         }
         closed = true
+        val drain = activator.beginCloseDrain()
         runtimeGeneration++
         logicalStates.values.forEach { it.generation++ }
         task?.cancel()
@@ -745,7 +755,42 @@ private constructor(
                     logFailure("ELEMENT_CLOSE_FAILED", elementId, null, error)
                 }
             }
-        finishClose(completion)
+        continueCloseAfterDrain(drain, completion)
+    }
+
+    private fun continueCloseAfterDrain(
+        drain: CompletionStage<Pair<Throwable?, Boolean>>,
+        completion: CompletableFuture<Void>,
+    ) {
+        try {
+            drain.whenComplete { result, drainError ->
+                val failure = drainError?.unwrap() ?: result?.first
+                try {
+                    marshal(
+                        Runnable {
+                            failure?.let { logFailure("RESOURCE_DRAIN_FAILED", null, null, it) }
+                            if (drainError != null || result?.second == true) {
+                                completion.completeExceptionally(
+                                    failure
+                                        ?: IllegalStateException(
+                                            "Resource drain could not continue on the owner thread."
+                                        )
+                                )
+                            } else {
+                                finishClose(completion)
+                            }
+                        }
+                    )
+                } catch (scheduleError: Throwable) {
+                    val combined = failure.withSuppressed(scheduleError)
+                    logFailure("CONTINUATION_SCHEDULE_FAILED", null, null, combined)
+                    completion.completeExceptionally(combined)
+                }
+            }
+        } catch (error: Throwable) {
+            logFailure("CONTINUATION_REGISTRATION_FAILED", null, null, error)
+            completion.completeExceptionally(error)
+        }
     }
 
     private fun finishClose(completion: CompletableFuture<Void>) {
