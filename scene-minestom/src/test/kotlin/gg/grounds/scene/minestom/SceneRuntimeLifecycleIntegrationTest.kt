@@ -462,9 +462,17 @@ class SceneRuntimeLifecycleIntegrationTest {
     }
 
     @Test
-    fun `creation renderer rejection does not perform foreign fallback cleanup`() {
+    fun `creation renderer rejection completes structured failure without foreign cleanup`() {
+        val ownerThread = Thread.currentThread()
         val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
-        val renderer = RecordingRenderer(instance)
+        val gate = ChunkGate(20, 20).also { it.install(instance) }
+        val renderer = EntityAttachingRenderer(instance, Pos(320.0, 2.0, 320.0))
+        val clock = ThreadCheckingClock(ownerThread)
+        val policy = ThreadCheckingPolicy(ownerThread)
+        val despawnThreads = mutableListOf<Thread>()
+        instance.eventNode().addListener(EntityDespawnEvent::class.java) {
+            despawnThreads += Thread.currentThread()
+        }
         val runtimeRequest =
             request(
                 instance,
@@ -472,6 +480,8 @@ class SceneRuntimeLifecycleIntegrationTest {
                 RecordingActions(),
                 scene = alwaysPropScene(),
                 assetCatalog = propAssets(),
+                clock = clock,
+                playerPolicy = policy,
             )
         val readiness =
             SceneReadiness.prepare(
@@ -486,25 +496,47 @@ class SceneRuntimeLifecycleIntegrationTest {
                     runtimeRequest.config,
                 )
             )
-        var rejectContinuations = false
+        val rejectedSubmissions = AtomicInteger()
+        val failures = mutableListOf<Pair<String, Thread>>()
         val creation =
             DefaultSceneRuntime.create(
                     runtimeRequest,
                     checkNotNull(readiness.capabilities),
                     schedule = { action ->
-                        if (rejectContinuations)
+                        if (
+                            Thread.currentThread() !== ownerThread &&
+                                rejectedSubmissions.compareAndSet(0, 1)
+                        ) {
                             throw IllegalStateException("owner scheduler rejected continuation")
+                        }
                         instance.scheduler().execute(action)
                     },
+                    failureObserver = { code, _ -> failures += code to Thread.currentThread() },
                 )
                 .toCompletableFuture()
-        tickUntil(instance) { renderer.createCalls == 1 }
+        val creationCompletionThread = AtomicReference<Thread>()
+        creation.whenComplete { _, _ -> creationCompletionThread.set(Thread.currentThread()) }
+        instance.tick(0)
+        assertTrue(gate.entered.await(5, TimeUnit.SECONDS))
 
-        rejectContinuations = true
-        Thread.startVirtualThread { renderer.completion.complete(renderer.handle) }.join()
+        gate.close()
+        gate.settled.awaitReady()
+        tickUntil(instance) { creation.isDone }
 
-        assertFalse(creation.isDone)
-        assertFalse(renderer.handle.closed)
+        val failure = assertIs<SceneRuntimeCreationResult.Failure>(creation.get())
+        assertEquals(SceneRuntimeProblemCode.ACTIVATION_FAILED, failure.problems.single().code)
+        assertEquals(1, rejectedSubmissions.get())
+        assertTrue(renderer.handle.closed)
+        assertEquals(listOf(ownerThread), renderer.handle.closeThreads)
+        assertTrue(renderer.display.isRemoved)
+        assertTrue(instance.entities.none { it === renderer.display })
+        assertTrue(despawnThreads.isNotEmpty())
+        assertTrue(despawnThreads.all { it === ownerThread })
+        assertSame(ownerThread, creationCompletionThread.get())
+        assertTrue(failures.isNotEmpty())
+        assertTrue(failures.all { it.second === ownerThread })
+        assertEquals(0, clock.offOwnerReads.get())
+        assertEquals(0, policy.offOwnerReads.get())
     }
 
     @Test
@@ -1351,6 +1383,7 @@ class SceneRuntimeLifecycleIntegrationTest {
 
     private class EntityHandle(private val entity: Entity) : RenderedAssetHandle {
         var closed = false
+        val closeThreads = mutableListOf<Thread>()
 
         override fun applyTransform(transform: SceneRenderTransform) = Unit
 
@@ -1366,6 +1399,7 @@ class SceneRuntimeLifecycleIntegrationTest {
 
         override fun close() {
             closed = true
+            closeThreads += Thread.currentThread()
             entity.remove()
         }
     }

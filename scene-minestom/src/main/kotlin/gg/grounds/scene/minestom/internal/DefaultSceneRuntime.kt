@@ -173,7 +173,16 @@ private constructor(
             failInstallation(elementId, IllegalStateException("Activation desire is stale."))
             return
         }
-        val activation = activator.beginActivation(state)
+        val unscheduledFailure =
+            SceneRuntimeCreationResult.Failure(
+                listOf(runtimeProblem("Runtime installation continuation could not be scheduled."))
+            )
+        val activation =
+            activator.beginActivation(state) {
+                // No owner continuation was accepted. Only publish the thread-safe terminal
+                // result; owner-confined runtime state and resources must remain untouched.
+                creation.complete(unscheduledFailure)
+            }
         val stage = activation.stage
         try {
             stage.whenComplete { active, error ->

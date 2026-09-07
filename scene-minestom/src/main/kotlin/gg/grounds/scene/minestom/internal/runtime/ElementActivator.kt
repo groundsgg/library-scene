@@ -49,19 +49,29 @@ internal class ElementActivator(
     fun beginCloseDrain(): CompletionStage<Pair<Throwable?, Boolean>> = resourceDrain.beginClose()
 
     fun activate(state: LogicalElementState): CompletionStage<ActiveElement> =
-        startActivation(state, false).stage
+        startActivation(state, false, null).stage
 
-    fun beginActivation(state: LogicalElementState): ElementActivation =
-        startActivation(state, true)
+    fun beginActivation(
+        state: LogicalElementState,
+        onUnrecoverableContinuation: ((Throwable) -> Unit)? = null,
+    ): ElementActivation = startActivation(state, true, onUnrecoverableContinuation)
 
     private fun startActivation(
         state: LogicalElementState,
         retainUntilClaimed: Boolean,
+        onUnrecoverableContinuation: ((Throwable) -> Unit)?,
     ): ElementActivation {
         val generation = state.generation
         val requested = renderRequests(state.element)
         val npcElement = state.element as? Npc
-        val activation = Activation(state, generation, requested, retainUntilClaimed)
+        val activation =
+            Activation(
+                state,
+                generation,
+                requested,
+                retainUntilClaimed,
+                onUnrecoverableContinuation,
+            )
 
         npcElement
             ?.takeIf { it.visible }
@@ -147,6 +157,9 @@ internal class ElementActivator(
                 } catch (scheduleError: Throwable) {
                     val failure = error?.unwrap().withSuppressed(scheduleError)
                     resourceDrain.completeOperation(failure, closeMustFail = true)
+                    activation.recoverRejectedContinuation(failure) {
+                        activation.npcResourceCompleted(failure)
+                    }
                 }
             }
         } catch (error: Throwable) {
@@ -182,6 +195,10 @@ internal class ElementActivator(
                 } catch (scheduleError: Throwable) {
                     val failure = error?.unwrap().withSuppressed(scheduleError)
                     resourceDrain.completeOperation(failure, closeMustFail = true)
+                    activation.recoverRejectedContinuation(failure) {
+                        val delivery = activation.recordDelivery(index, handle, failure)
+                        activation.finishDelivery(delivery)
+                    }
                 }
             }
         } catch (error: Throwable) {
@@ -287,6 +304,7 @@ internal class ElementActivator(
         private val generation: Long,
         private val requests: List<RenderRequest>,
         private val retainUntilClaimed: Boolean,
+        private val onUnrecoverableContinuation: ((Throwable) -> Unit)?,
     ) : ElementActivation {
         private val future = CompletableFuture<ActiveElement>()
         override val stage: CompletionStage<ActiveElement>
@@ -381,6 +399,23 @@ internal class ElementActivator(
             }
 
         fun completed() = synchronized(this) { if (!terminal) publishOrClose() }
+
+        fun recoverRejectedContinuation(failure: Throwable, action: () -> Unit) {
+            val unrecoverable = onUnrecoverableContinuation ?: return
+            try {
+                schedule(
+                    Runnable {
+                        try {
+                            action()
+                        } catch (callbackError: Throwable) {
+                            failed(callbackError)
+                        }
+                    }
+                )
+            } catch (scheduleError: Throwable) {
+                unrecoverable(failure.withSuppressed(scheduleError))
+            }
+        }
 
         fun failed(error: Throwable) {
             synchronized(this) {
