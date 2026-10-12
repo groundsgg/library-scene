@@ -154,6 +154,23 @@ class ElementActivatorTest {
             assertTrue(interaction.response)
         }
         assertEquals(-0.5, entities.interaction.position.y())
+        assertEquals(0.0, entities.interaction.boundingBox.width())
+        assertEquals(0.0, entities.interaction.boundingBox.height())
+        assertEquals(0.0, entities.interaction.boundingBox.depth())
+
+        active.updateRuntimeTransform(
+            SceneRenderTransform(
+                Transform(Vec3(9.0, 0.0, 0.0), EulerRotation(0.0, 0.0, 0.0), Vec3(2.0, 2.0, 2.0)),
+                null,
+            )
+        )
+        assertEquals(0.0, entities.interaction.boundingBox.width())
+        assertEquals(0.0, entities.interaction.boundingBox.height())
+        assertEquals(0.0, entities.interaction.boundingBox.depth())
+        (entities.interaction.entityMeta as InteractionMeta).also { interaction ->
+            assertEquals(8.0f, interaction.width)
+            assertEquals(6.0f, interaction.height)
+        }
         assertEquals(state.element.id, activator.interactionElementId(entities.interaction.uuid))
         activator.deactivate(active)
         assertNull(activator.interactionElementId(entities.interaction.uuid))

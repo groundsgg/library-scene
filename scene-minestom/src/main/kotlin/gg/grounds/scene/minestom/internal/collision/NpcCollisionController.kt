@@ -145,7 +145,6 @@ internal class NpcCollisionController(
         }
         val accepted = AcceptedPosition(old.x(), old.y(), old.z())
         val token = contact.token
-        lastImpulseNanos[player.uuid] = clock.nanoTime()
         schedule(
             Runnable {
                 val currentContact = contacts[player.uuid]
@@ -163,6 +162,7 @@ internal class NpcCollisionController(
                     currentHit(hit.key.identity, playerBox, old, delta) ?: return@Runnable
                 val currentStrength =
                     currentHit.active.npc?.collision?.bounceStrength ?: return@Runnable
+                if (!minimumIntervalElapsed(player.uuid)) return@Runnable
                 val velocity = player.velocity
                 player.velocity =
                     Vec(
@@ -170,6 +170,7 @@ internal class NpcCollisionController(
                         velocity.y(),
                         currentHit.outward.z() * currentStrength,
                     )
+                lastImpulseNanos[player.uuid] = clock.nanoTime()
             }
         )
     }
@@ -357,8 +358,7 @@ private fun slabEntry(
                 val x = movingPosition.x() + motion[0] * enter - colliderPosition.x()
                 val z = movingPosition.z() + motion[2] * enter - colliderPosition.z()
                 val length = sqrt(x * x + z * z)
-                if (length == 0.0) return null
-                Vec(x / length, 0.0, z / length)
+                if (length == 0.0) Vec(-1.0, 0.0, 0.0) else Vec(x / length, 0.0, z / length)
             }
         }
     return SlabEntry(enter, outward)

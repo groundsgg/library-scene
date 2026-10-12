@@ -2,6 +2,7 @@ package gg.grounds.scene.minestom.internal.runtime
 
 import gg.grounds.scene.format.LocalId
 import gg.grounds.scene.format.Npc
+import gg.grounds.scene.format.NpcCollisionMode
 import gg.grounds.scene.minestom.RenderedAssetHandle
 import gg.grounds.scene.minestom.SceneRenderTransform
 import gg.grounds.scene.minestom.internal.geometry.WorldBounds
@@ -76,11 +77,14 @@ internal class ActiveElement(
             val bounds = authoredNpc.interactionBounds.transformed(affine)
             attempt {
                 entities.interaction.boundingBox =
-                    BoundingBox(
-                        bounds.max.x - bounds.min.x,
-                        bounds.max.y - bounds.min.y,
-                        bounds.max.z - bounds.min.z,
-                    )
+                    if (authoredNpc.collision.mode == NpcCollisionMode.NONE)
+                        BoundingBox(0.0, 0.0, 0.0)
+                    else
+                        BoundingBox(
+                            bounds.max.x - bounds.min.x,
+                            bounds.max.y - bounds.min.y,
+                            bounds.max.z - bounds.min.z,
+                        )
                 (entities.interaction.entityMeta as InteractionMeta).apply {
                     width = max(bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z).toFloat()
                     height = (bounds.max.y - bounds.min.y).toFloat()

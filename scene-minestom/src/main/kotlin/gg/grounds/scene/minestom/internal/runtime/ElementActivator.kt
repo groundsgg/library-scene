@@ -4,6 +4,7 @@ import gg.grounds.scene.format.AssetKind
 import gg.grounds.scene.format.CompositeProp
 import gg.grounds.scene.format.LocalId
 import gg.grounds.scene.format.Npc
+import gg.grounds.scene.format.NpcCollisionMode
 import gg.grounds.scene.format.Prop
 import gg.grounds.scene.format.SceneElement
 import gg.grounds.scene.format.Vec3
@@ -256,11 +257,13 @@ internal class ElementActivator(
             val transform = SceneRenderTransform(npc.transform, null)
             val bounds = npc.interactionBounds.transformed(transform.affine())
             interaction.boundingBox =
-                BoundingBox(
-                    bounds.max.x - bounds.min.x,
-                    bounds.max.y - bounds.min.y,
-                    bounds.max.z - bounds.min.z,
-                )
+                if (npc.collision.mode == NpcCollisionMode.NONE) BoundingBox(0.0, 0.0, 0.0)
+                else
+                    BoundingBox(
+                        bounds.max.x - bounds.min.x,
+                        bounds.max.y - bounds.min.y,
+                        bounds.max.z - bounds.min.z,
+                    )
             (interaction.entityMeta as InteractionMeta).apply {
                 width = max(bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z).toFloat()
                 height = (bounds.max.y - bounds.min.y).toFloat()

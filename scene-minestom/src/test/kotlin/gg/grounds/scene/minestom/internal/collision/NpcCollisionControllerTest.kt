@@ -82,6 +82,22 @@ class NpcCollisionControllerTest {
     }
 
     @Test
+    fun `centered downward crossing remains solid and has deterministic horizontal bounce`() {
+        val solid = Fixture(NpcCollision(NpcCollisionMode.SOLID, 6.0))
+        solid.player.teleport(Pos(0.0, 3.0, 0.0)).join()
+        assertEquals(Pos(0.0, 3.0, 0.0), solid.move(Pos(0.0, 1.0, 0.0)).newPosition)
+
+        val bounce = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0))
+        bounce.player.teleport(Pos(0.0, 3.0, 0.0)).join()
+        bounce.player.velocity = Vec(4.0, -2.5, 3.0)
+        val event = bounce.move(Pos(0.0, 1.0, 0.0))
+        bounce.runScheduled()
+
+        assertEquals(Pos(0.0, 3.0, 0.0), event.newPosition)
+        assertEquals(Vec(-6.0, -2.5, 0.0), bounce.player.velocity)
+    }
+
+    @Test
     fun `tangent and vertical-clearance movement remain accepted while near-boundary inward movement blocks`() {
         val fixture = Fixture(NpcCollision(NpcCollisionMode.SOLID, 6.0))
         fixture.player.teleport(Pos(-1.31, 0.0, -2.0)).join()
@@ -200,6 +216,40 @@ class NpcCollisionControllerTest {
     }
 
     @Test
+    fun `bounce cooldown is measured between delivered impulses`() {
+        val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0))
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.clock.advanceMillis(200)
+        fixture.runScheduled()
+        assertEquals(-6.0, fixture.player.velocity.z(), 1e-9)
+
+        fixture.player.velocity = Vec.ZERO
+        fixture.move(Pos(0.0, 0.0, -3.0))
+        fixture.clock.advanceMillis(50)
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.clock.advanceMillis(50)
+        fixture.runScheduled()
+
+        assertEquals(Vec.ZERO, fixture.player.velocity)
+    }
+
+    @Test
+    fun `cancelled queued bounce does not consume cooldown`() {
+        val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0))
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.translateCollider(10.0)
+        fixture.runScheduled()
+        assertEquals(Vec.ZERO, fixture.player.velocity)
+
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.translateCollider(0.0)
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.runScheduled()
+
+        assertEquals(-6.0, fixture.player.velocity.z(), 1e-9)
+    }
+
+    @Test
     fun `disconnect close and collider generation change invalidate delayed impulses`() {
         listOf<(Fixture) -> Unit>(
                 { it.controller.disconnect(it.player.uuid) },
@@ -283,12 +333,20 @@ class NpcCollisionControllerTest {
         }
 
         fun rotateCollider(yaw: Double) {
+            transformCollider(0.0, yaw)
+        }
+
+        fun translateCollider(x: Double) {
+            transformCollider(x, 0.0)
+        }
+
+        private fun transformCollider(x: Double, yaw: Double) {
             active
                 .getValue(npc.id)
                 .updateRuntimeTransform(
                     SceneRenderTransform(
                         Transform(
-                            Vec3(0.0, 0.0, 0.0),
+                            Vec3(x, 0.0, 0.0),
                             EulerRotation(yaw, 0.0, 0.0),
                             Vec3(1.0, 1.0, 1.0),
                         ),
