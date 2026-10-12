@@ -14,6 +14,7 @@ import gg.grounds.scene.minestom.SceneAssetRendererFactory
 import gg.grounds.scene.minestom.SceneClock
 import gg.grounds.scene.minestom.SceneRenderTransform
 import gg.grounds.scene.minestom.internal.RendererCapabilityKey
+import gg.grounds.scene.minestom.internal.collision.requireSupportedCollisionGeometry
 import gg.grounds.scene.minestom.internal.elapsedNanos
 import gg.grounds.scene.minestom.internal.geometry.affine
 import gg.grounds.scene.minestom.internal.geometry.transformed
@@ -75,6 +76,17 @@ internal class ElementActivator(
                 retainUntilClaimed,
                 onUnrecoverableContinuation,
             )
+
+        if (npcElement != null) {
+            try {
+                npcElement.requireSupportedCollisionGeometry(
+                    SceneRenderTransform(npcElement.transform, null)
+                )
+            } catch (error: IllegalArgumentException) {
+                activation.failed(error)
+                return activation
+            }
+        }
 
         npcElement
             ?.takeIf { it.visible }
@@ -255,7 +267,7 @@ internal class ElementActivator(
         var label: Entity? = null
         try {
             val transform = SceneRenderTransform(npc.transform, null)
-            val bounds = npc.interactionBounds.transformed(transform.affine())
+            val bounds = npc.requireSupportedCollisionGeometry(transform).bounds
             interaction.boundingBox =
                 if (npc.collision.mode == NpcCollisionMode.NONE) BoundingBox(0.0, 0.0, 0.0)
                 else

@@ -5,6 +5,7 @@ import gg.grounds.scene.format.Npc
 import gg.grounds.scene.format.NpcCollisionMode
 import gg.grounds.scene.minestom.RenderedAssetHandle
 import gg.grounds.scene.minestom.SceneRenderTransform
+import gg.grounds.scene.minestom.internal.collision.requireSupportedCollisionGeometry
 import gg.grounds.scene.minestom.internal.geometry.WorldBounds
 import gg.grounds.scene.minestom.internal.geometry.affine
 import gg.grounds.scene.minestom.internal.geometry.transformed
@@ -55,6 +56,7 @@ internal class ActiveElement(
         handles.mapIndexed { index, handle -> handlePartIds.getOrNull(index) to handle }
 
     fun updateRuntimeTransform(transform: SceneRenderTransform) {
+        val collisionGeometry = npc?.requireSupportedCollisionGeometry(transform)
         runtimeTransform = transform
         var failure: Throwable? = null
         fun attempt(action: () -> Unit) {
@@ -74,7 +76,7 @@ internal class ActiveElement(
         val entities = npcEntities
         if (authoredNpc != null && entities != null) {
             val affine = transform.affine()
-            val bounds = authoredNpc.interactionBounds.transformed(affine)
+            val bounds = checkNotNull(collisionGeometry).bounds
             attempt {
                 entities.interaction.boundingBox =
                     if (authoredNpc.collision.mode == NpcCollisionMode.NONE)

@@ -188,6 +188,56 @@ class ElementActivatorTest {
     }
 
     @Test
+    fun `oversize collision transform fails before publishing any runtime changes`() {
+        val factory = RecordingFactory().apply { completeImmediately = true }
+        val authored = npc()
+        val solid =
+            Npc(
+                authored.id,
+                authored.group,
+                authored.transform,
+                authored.visible,
+                authored.activation,
+                authored.body,
+                authored.label,
+                authored.labelOffset,
+                authored.look,
+                authored.initialAnimation,
+                LocalBounds(Vec3(0.0, 31.5, 0.0), Vec3(1.0, 63.0, 1.0)),
+                authored.proximity,
+                authored.bindings,
+                NpcCollision(NpcCollisionMode.SOLID, 6.0),
+            )
+        val active = activator(factory).activate(state(solid)).await()
+        val interaction = assertNotNull(active.npcEntities).interaction
+        val originalTransform = active.currentTransform
+        val originalPosition = interaction.position
+        val originalBox = interaction.boundingBox
+        val originalMeta = interaction.entityMeta as InteractionMeta
+        val originalWidth = originalMeta.width
+        val originalHeight = originalMeta.height
+        val handle = factory.handles.single()
+        val oversize =
+            SceneRenderTransform(
+                Transform(
+                    Vec3(10.0, 0.0, 0.0),
+                    EulerRotation(0.0, 0.0, 0.0),
+                    Vec3(1.0, 65.0 / 63.0, 1.0),
+                ),
+                null,
+            )
+
+        assertFailsWith<IllegalArgumentException> { active.updateRuntimeTransform(oversize) }
+
+        assertEquals(originalTransform, active.currentTransform)
+        assertEquals(emptyList(), handle.appliedTransforms)
+        assertEquals(originalPosition, interaction.position)
+        assertEquals(originalBox, interaction.boundingBox)
+        assertEquals(originalWidth, (interaction.entityMeta as InteractionMeta).width)
+        assertEquals(originalHeight, (interaction.entityMeta as InteractionMeta).height)
+    }
+
+    @Test
     fun `rolls back completed composite handles when a later renderer fails`() {
         val factory = RecordingFactory()
         val state =
@@ -546,8 +596,11 @@ class ElementActivatorTest {
         var closeFailure: Throwable? = null
         val closeThreads = mutableListOf<Thread>()
         val startedAnimations = mutableListOf<Pair<LocalId, Long>>()
+        val appliedTransforms = mutableListOf<SceneRenderTransform>()
 
-        override fun applyTransform(transform: SceneRenderTransform) = Unit
+        override fun applyTransform(transform: SceneRenderTransform) {
+            appliedTransforms += transform
+        }
 
         override fun applyViewerState(
             player: net.minestom.server.entity.Player,

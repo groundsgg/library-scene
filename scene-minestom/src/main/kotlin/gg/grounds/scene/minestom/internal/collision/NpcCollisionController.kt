@@ -53,10 +53,8 @@ internal class NpcCollisionController(
                     npc.collision.mode != NpcCollisionMode.NONE &&
                     interaction?.instance === instance
             ) {
-                val bounds = active.currentBounds()
-                val halfX = (bounds.max.x - bounds.min.x) / 2.0
-                val height = bounds.max.y - bounds.min.y
-                val halfZ = (bounds.max.z - bounds.min.z) / 2.0
+                val evaluated = npc.requireSupportedCollisionGeometry(active.currentTransform)
+                val bounds = evaluated.bounds
                 ColliderGeometry(
                     interaction.uuid,
                     bounds.min.x,
@@ -65,7 +63,7 @@ internal class NpcCollisionController(
                     bounds.max.x,
                     bounds.max.y,
                     bounds.max.z,
-                    sqrt(halfX * halfX + height * height + halfZ * halfZ),
+                    evaluated.radius,
                 )
             } else {
                 null
@@ -110,10 +108,15 @@ internal class NpcCollisionController(
                     max(abs(playerBox.minY()), abs(playerBox.maxY())).let { it * it } +
                     max(abs(playerBox.minZ()), abs(playerBox.maxZ())).let { it * it }
             )
+        val queryRadius = delta.length() + playerExtent + maximumExtent
+        if (!queryRadius.isFinite() || queryRadius > MAX_NPC_QUERY_RADIUS) {
+            event.newPosition = Pos(old.x(), old.y(), old.z(), requested.yaw(), requested.pitch())
+            return
+        }
         val candidates = mutableListOf<Entity>()
         instance.entityTracker.nearbyEntities(
             old,
-            delta.length() + playerExtent + maximumExtent,
+            queryRadius,
             EntityTracker.Target.ENTITIES,
             candidates::add,
         )

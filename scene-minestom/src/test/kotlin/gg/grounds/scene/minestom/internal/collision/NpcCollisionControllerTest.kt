@@ -60,6 +60,20 @@ class NpcCollisionControllerTest {
     }
 
     @Test
+    fun `over-budget movement is corrected without resetting contact or scheduling bounce`() {
+        val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0))
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        assertEquals(1, fixture.scheduled.size)
+
+        val event = fixture.move(Pos(0.0, 0.0, -111.0, 28f, -9f))
+
+        assertEquals(Pos(0.0, 0.0, -2.0, 28f, -9f), event.newPosition)
+        assertEquals(1, fixture.scheduled.size)
+        fixture.runScheduled()
+        assertEquals(-6.0, fixture.player.velocity.z(), 1e-9)
+    }
+
+    @Test
     fun `tracker query reaches the top of a tall bottom-anchored collider`() {
         val fixture = Fixture(NpcCollision(NpcCollisionMode.SOLID, 6.0), colliderHeight = 20.0)
         fixture.player.teleport(Pos(0.0, 18.0, -2.0)).join()

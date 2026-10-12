@@ -2,6 +2,7 @@ package gg.grounds.scene.minestom.internal
 
 import gg.grounds.scene.format.*
 import gg.grounds.scene.minestom.*
+import gg.grounds.scene.minestom.internal.collision.requireSupportedCollisionGeometry
 import java.util.Collections
 
 internal data class RendererCapabilityKey(val asset: AssetKey, val kind: AssetKind)
@@ -75,6 +76,22 @@ internal object SceneReadiness {
                         }
                     request.scene.elements.forEach { element ->
                         val path = "elements/${element.id.value}"
+                        if (element is Npc) {
+                            try {
+                                element.requireSupportedCollisionGeometry(
+                                    SceneRenderTransform(element.transform, null)
+                                )
+                            } catch (error: IllegalArgumentException) {
+                                add(
+                                    problem(
+                                        SceneRuntimeProblemCode.INVALID_SCENE,
+                                        "$path/interactionBounds",
+                                        element.id,
+                                        checkNotNull(error.message),
+                                    )
+                                )
+                            }
+                        }
                         if (!element.visible) return@forEach
                         when (element) {
                             is Prop ->
