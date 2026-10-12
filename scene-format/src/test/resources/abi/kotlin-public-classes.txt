@@ -37,6 +37,8 @@ gg.grounds.scene.format.LookBehavior$Fixed
 gg.grounds.scene.format.LookBehavior$TrackNearest
 gg.grounds.scene.format.NoConstraints
 gg.grounds.scene.format.Npc
+gg.grounds.scene.format.NpcCollision
+gg.grounds.scene.format.NpcCollisionMode
 gg.grounds.scene.format.ParameterConstraints
 gg.grounds.scene.format.PermissionCondition
 gg.grounds.scene.format.PlaySoundAction

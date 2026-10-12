@@ -87,10 +87,13 @@ internal data class NpcWire(
     val initialAnimation: String?,
     val interactionBounds: BoundsWire,
     val proximity: ProximityWire?,
+    val collision: NpcCollisionWire?,
     val bindings: List<BindingWire>,
 ) : ElementWire {
     override val type = "npc"
 }
+
+internal data class NpcCollisionWire(val mode: String, val bounceStrength: Double)
 
 internal sealed interface LookWire {
     val type: String

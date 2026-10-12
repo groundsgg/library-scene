@@ -39,6 +39,7 @@ gg.grounds.scene.format.IntrinsicValidator$duplicates$$inlined$sortedBy$1
 gg.grounds.scene.format.LongArgumentWire
 gg.grounds.scene.format.LookWire
 gg.grounds.scene.format.MetadataWire
+gg.grounds.scene.format.NpcCollisionWire
 gg.grounds.scene.format.NpcWire
 gg.grounds.scene.format.PermissionConditionWire
 gg.grounds.scene.format.PlaySoundWire
@@ -65,6 +66,7 @@ gg.grounds.scene.format.TrackNearestLookWire
 gg.grounds.scene.format.TransformWire
 gg.grounds.scene.format.Vec3Wire
 gg.grounds.scene.format.WireMapping
+gg.grounds.scene.format.WireMapping$WhenMappings
 gg.grounds.scene.format.WireMapping$action$$inlined$compareBy$1
 gg.grounds.scene.format.WireMapping$binding$$inlined$sortedBy$1
 gg.grounds.scene.format.WireMapping$canonicalElement$$inlined$compareBy$1

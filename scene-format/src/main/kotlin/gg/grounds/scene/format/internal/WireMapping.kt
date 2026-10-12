@@ -69,6 +69,7 @@ internal object WireMapping {
                     element.initialAnimation?.value,
                     bounds(element.interactionBounds),
                     element.proximity?.let { ProximityWire(it.enterRadius, it.exitRadius) },
+                    element.collision.takeUnless { it == NpcCollision() }?.let(::collision),
                     element.bindings.map(::binding),
                 )
         }
@@ -94,6 +95,16 @@ internal object WireMapping {
                     value.maxTurnDegreesPerSecond,
                 )
         }
+
+    private fun collision(value: NpcCollision) =
+        NpcCollisionWire(
+            when (value.mode) {
+                NpcCollisionMode.NONE -> "none"
+                NpcCollisionMode.SOLID -> "solid"
+                NpcCollisionMode.BOUNCE -> "bounce"
+            },
+            value.bounceStrength,
+        )
 
     private fun binding(value: TriggerBinding) =
         BindingWire(
@@ -242,6 +253,7 @@ internal object WireMapping {
                     w.bindings.mapIndexed { index, binding ->
                         binding(binding, "$path/bindings/$index")
                     },
+                    w.collision?.let { collision(it, "$path/collision") } ?: NpcCollision(),
                 )
         }
 
@@ -299,6 +311,19 @@ internal object WireMapping {
             "INVALID_ACTION_ARGUMENT",
         ) {
             ProximitySensor(w.enterRadius, w.exitRadius)
+        }
+
+    private fun collision(w: NpcCollisionWire, path: String): NpcCollision =
+        mapped("$path/bounceStrength", "INVALID_ACTION_ARGUMENT") {
+            NpcCollision(
+                when (w.mode) {
+                    "none" -> NpcCollisionMode.NONE
+                    "solid" -> NpcCollisionMode.SOLID
+                    "bounce" -> NpcCollisionMode.BOUNCE
+                    else -> error("WireReader accepted an invalid collision mode")
+                },
+                w.bounceStrength,
+            )
         }
 
     private fun binding(w: BindingWire, path: String): TriggerBinding {

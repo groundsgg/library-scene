@@ -159,22 +159,29 @@ internal object CanonicalJson {
                     obj(
                         depth,
                         compact,
-                        listOf(
-                            "type" to value.type,
-                            "id" to value.id,
-                            "group" to value.group,
-                            "transform" to value.transform,
-                            "visible" to value.visible,
-                            "activation" to value.activation,
-                            "body" to value.body,
-                            "label" to value.label,
-                            "labelOffset" to value.labelOffset,
-                            "look" to value.look,
-                            "initialAnimation" to value.initialAnimation,
-                            "interactionBounds" to value.interactionBounds,
-                            "proximity" to value.proximity,
-                            "bindings" to value.bindings,
-                        ),
+                        buildList {
+                            add("type" to value.type)
+                            add("id" to value.id)
+                            add("group" to value.group)
+                            add("transform" to value.transform)
+                            add("visible" to value.visible)
+                            add("activation" to value.activation)
+                            add("body" to value.body)
+                            add("label" to value.label)
+                            add("labelOffset" to value.labelOffset)
+                            add("look" to value.look)
+                            add("initialAnimation" to value.initialAnimation)
+                            add("interactionBounds" to value.interactionBounds)
+                            add("proximity" to value.proximity)
+                            value.collision?.let { add("collision" to it) }
+                            add("bindings" to value.bindings)
+                        },
+                    )
+                is NpcCollisionWire ->
+                    obj(
+                        depth,
+                        compact,
+                        listOf("mode" to value.mode, "bounceStrength" to value.bounceStrength),
                     )
                 is FixedLookWire -> obj(depth, compact, listOf("type" to value.type))
                 is TrackNearestLookWire ->
