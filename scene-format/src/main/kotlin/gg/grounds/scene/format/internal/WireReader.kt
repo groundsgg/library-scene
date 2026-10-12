@@ -198,9 +198,21 @@ internal object WireReader {
         obj(node, emptySet(), path, setOf("mode", "bounceStrength")) { value ->
             NpcCollisionWire(
                 if (value.has("mode")) enum(value, "mode", path, COLLISION_MODE_NAMES) else "none",
-                if (value.has("bounceStrength")) double(value, "bounceStrength", path) else 6.0,
+                if (value.has("bounceStrength")) collisionStrength(value, path) else 6.0,
             )
         }
+
+    private fun collisionStrength(node: JsonNode, path: String): Double {
+        val strength = decimal(node, "bounceStrength", path)
+        if (strength < BigDecimal.ZERO || strength > MAX_COLLISION_STRENGTH) {
+            fail(
+                childPath(path, "bounceStrength"),
+                "INVALID_ACTION_ARGUMENT",
+                "Collision bounce strength must be between 0.0 and 20.0 inclusive.",
+            )
+        }
+        return strength.toDouble()
+    }
 
     private fun binding(node: JsonNode, path: String) =
         obj(
@@ -474,6 +486,7 @@ internal object WireReader {
 
     private val ACTIVATION_NAMES = setOf("AUTOMATIC", "ALWAYS")
     private val COLLISION_MODE_NAMES = setOf("none", "solid", "bounce")
+    private val MAX_COLLISION_STRENGTH = BigDecimal.valueOf(20)
     private val TRIGGER_NAMES =
         setOf(
             "LEFT_CLICK",

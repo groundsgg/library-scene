@@ -106,6 +106,24 @@ class NpcCollisionTest {
     }
 
     @Test
+    fun `decode rejects strength above maximum before rounding to double`() {
+        assertDecodeFailure(
+            sceneWithCollision("""{"mode":"bounce","bounceStrength":20.0000000000000001}"""),
+            SceneProblemCode.INVALID_ACTION_ARGUMENT,
+            "/elements/0/collision/bounceStrength",
+        )
+    }
+
+    @Test
+    fun `decode rejects negative strength before underflowing to double zero`() {
+        assertDecodeFailure(
+            sceneWithCollision("""{"mode":"bounce","bounceStrength":-1e-400}"""),
+            SceneProblemCode.INVALID_ACTION_ARGUMENT,
+            "/elements/0/collision/bounceStrength",
+        )
+    }
+
+    @Test
     fun `existing NPC constructors and first thirteen components remain present`() {
         val constructorParameterPrefixes =
             Npc::class.java.declaredConstructors.map { constructor ->
