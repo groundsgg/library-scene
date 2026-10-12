@@ -15,6 +15,7 @@ import net.minestom.server.event.EventNode
 import net.minestom.server.event.entity.EntityAttackEvent
 import net.minestom.server.event.player.PlayerDisconnectEvent
 import net.minestom.server.event.player.PlayerEntityInteractEvent
+import net.minestom.server.event.player.PlayerMoveEvent
 import net.minestom.server.event.trait.InstanceEvent
 
 internal class MinestomSceneEvents(
@@ -23,6 +24,7 @@ internal class MinestomSceneEvents(
     private val activeElement: (LocalId) -> ActiveElement?,
     private val acceptedNanos: () -> Long,
     private val accept: (SceneTriggerInput) -> Unit,
+    private val move: (PlayerMoveEvent) -> Unit,
     private val disconnect: (Player) -> Unit,
 ) {
     val node: EventNode<InstanceEvent> = EventNode.type(name, EventFilter.INSTANCE)
@@ -32,6 +34,7 @@ internal class MinestomSceneEvents(
     init {
         node.addListener(PlayerEntityInteractEvent::class.java, ::rightClick)
         node.addListener(EntityAttackEvent::class.java, ::leftClick)
+        node.addListener(PlayerMoveEvent::class.java, move)
         node.addListener(PlayerDisconnectEvent::class.java) { disconnect(it.player) }
     }
 

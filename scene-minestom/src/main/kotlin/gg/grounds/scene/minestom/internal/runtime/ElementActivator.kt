@@ -22,6 +22,7 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.CompletionStage
 import kotlin.math.max
+import net.minestom.server.collision.BoundingBox
 import net.minestom.server.coordinate.Vec
 import net.minestom.server.entity.Entity
 import net.minestom.server.entity.EntityType
@@ -42,6 +43,7 @@ internal class ElementActivator(
     private val rendererFactories: Map<RendererCapabilityKey, SceneAssetRendererFactory>,
     private val clock: SceneClock,
     private val schedule: (Runnable) -> Unit = Runnable::run,
+    private val colliderChanged: (ActiveElement) -> Unit = {},
 ) {
     private val interactionIds = mutableMapOf<UUID, LocalId>()
     private val resourceDrain = ResourceDrain()
@@ -253,6 +255,12 @@ internal class ElementActivator(
         try {
             val transform = SceneRenderTransform(npc.transform, null)
             val bounds = npc.interactionBounds.transformed(transform.affine())
+            interaction.boundingBox =
+                BoundingBox(
+                    bounds.max.x - bounds.min.x,
+                    bounds.max.y - bounds.min.y,
+                    bounds.max.z - bounds.min.z,
+                )
             (interaction.entityMeta as InteractionMeta).apply {
                 width = max(bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z).toFloat()
                 height = (bounds.max.y - bounds.min.y).toFloat()
@@ -513,6 +521,7 @@ internal class ElementActivator(
                     resourceDrain::completeOperation,
                     resourceDrain::isClosing,
                     schedule,
+                    colliderChanged,
                 )
             if (retainUntilClaimed) published = active
             future.complete(active)
