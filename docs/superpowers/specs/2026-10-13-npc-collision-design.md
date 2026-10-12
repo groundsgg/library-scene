@@ -91,6 +91,27 @@ without becoming trapped or being repeatedly bounced. Teleports themselves
 are not vetoed by the movement listener. NPC transforms/deactivation must not
 leave stale barriers or delayed impulses behind.
 
+### Native query performance boundary
+
+Native nearby-entity lookup enumerates empty chunks too; an unrestricted
+authored collider extent would turn every movement into unbounded work.
+For non-`none` modes, the transformed collider's farthest-corner distance from
+its bottom-center entity origin must be finite and at most **64 blocks**.
+Readiness rejects unsupported geometry, and runtime transforms reject it before
+changing the current valid rendered/physical state. Default `none` scenes keep
+their previous geometry behavior and zero physical interaction box.
+
+The movement query radius is finite and at most **112 blocks**, corresponding
+to at most an eight-chunk search radius / 289 chunk visits in the supported
+native tracker. Reject/correct a sweep exceeding that work budget without a
+new bounce; do not clamp the radius and silently omit colliders. This does not
+intercept server teleports. These are fixed implementation safety limits, not
+additional authoring knobs or a general anti-cheat subsystem.
+
+If a centered vertical hit has no horizontal approach/offset, it still blocks;
+`bounce` uses a deterministic negative-X horizontal fallback. Cooldown is
+measured between successful delivered impulses, not the time they were queued.
+
 ## Alternatives considered
 
 1. **Native tracker plus movement validation (chosen):** reuses existing

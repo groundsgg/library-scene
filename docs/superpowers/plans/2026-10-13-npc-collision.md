@@ -18,6 +18,7 @@
 - Omit the collision object canonically only for the full default (`none`, 6.0).
 - No new custom index, world edits, solid proxy mobs, repeating NPC tasks or all-NPC movement scans.
 - One impulse per continuous contact and a **250 ms** minimum between impulses; retain vertical velocity.
+- Non-NONE transformed physical collider radius is finite and at most **64.0 blocks** from bottom-center origin; native movement query radius is finite and at most **112.0 blocks** (eight-chunk /289-visit budget).
 - Only active visible owned NPCs and eligible same-instance non-spectator players collide.
 - Existing scenes/pins are not silently migrated; Release Please only; no normal occupied-fleet, map-pin or PackSet mutation.
 
@@ -56,6 +57,7 @@
 **Files:**
 - Create: `scene-minestom/src/main/kotlin/gg/grounds/scene/minestom/internal/collision/NpcCollisionController.kt`.
 - Modify: `scene-minestom/src/main/kotlin/gg/grounds/scene/minestom/internal/{MinestomSceneEvents,DefaultSceneRuntime}.kt`.
+- Modify: `scene-minestom/src/main/kotlin/gg/grounds/scene/minestom/internal/SceneReadiness.kt` and a small private collision-geometry helper for the bounded physical-extent contract.
 - Modify: `scene-minestom/src/main/kotlin/gg/grounds/scene/minestom/internal/runtime/{ActiveElement,ElementActivator}.kt` as needed to align the owned interaction entity's physical bounding box.
 - Test: `scene-minestom/src/test/kotlin/gg/grounds/scene/minestom/internal/collision/NpcCollisionControllerTest.kt` and runtime lifecycle integration tests.
 
@@ -67,6 +69,7 @@
 - [ ] Run the focused runtime tests and capture the expected missing-feature failures.
 - [ ] Implement using existing native tracker and `BoundingBox.intersectBoxSwept` APIs, calculating the candidate radius from current active collider extents on activation/transform changes rather than scanning all NPCs per movement. `CollisionUtils.checkEntityCollisions` has incompatible return descriptors between the library's July baseline and the deployed October fork; do not call it directly or add reflection into the movement hot path. Native sweep gives a boolean but no public fraction/normal getter, so use a small internal AABB slab-entry helper to rank native-confirmed hits and choose outward horizontal direction. Filter owned current colliders, skip initial overlap for escape, choose earliest swept hit, correct to the old position with the requested rotation, and gate one-shot velocity by contact and lifecycle/generation checks.
 - [ ] Run focused tests, full `./gradlew test spotlessCheck --console=plain`, and inspect that no new public scene-minestom API or repeating task was introduced.
+- [ ] Reject oversize/nonfinite non-NONE transformed extents in readiness, activation and before runtime transform publication, preserving the prior valid state. Correct over-budget movement before native lookup without a new impulse; no silent radius clamp or all-NPC fallback. Test readiness with a huge finite collider safely (no billion-chunk movement), allowed/rejected geometry near64, and a modest just-over112 movement away from the collider; preserve NONE legacy behavior.
 - [ ] Commit Task2 with `feat: enforce optional NPC collision and bounce`; report exact native version used and test evidence.
 
 ### Task 3: In-game authoring
