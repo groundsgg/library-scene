@@ -35,6 +35,7 @@ import net.minestom.server.event.entity.EntityDespawnEvent
 import net.minestom.server.event.instance.InstanceChunkLoadEvent
 import net.minestom.server.event.player.PlayerDisconnectEvent
 import net.minestom.server.event.player.PlayerEntityInteractEvent
+import net.minestom.server.event.player.PlayerMoveEvent
 import net.minestom.server.instance.Chunk
 import net.minestom.server.instance.ChunkLoader
 import net.minestom.server.instance.Instance
@@ -46,6 +47,74 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 
 class SceneRuntimeLifecycleIntegrationTest {
+    @Test
+    fun `runtime event node blocks native npc bounds and permits initial-overlap escape`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val player =
+            Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
+                it.setInstance(instance, Pos(0.0, 0.0, -2.0)).join()
+            }
+        val renderer = ImmediateRenderer(instance)
+        val creation =
+            SceneRuntimeFactory.create(
+                    request(
+                        instance,
+                        renderer,
+                        RecordingActions(),
+                        scene = collisionScene(NpcCollision(NpcCollisionMode.SOLID, 6.0)),
+                    )
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { creation.isDone }
+        val runtime = assertIs<SceneRuntimeCreationResult.Success>(creation.get()).runtime
+        val interaction = instance.entities.single { it.entityType == EntityType.INTERACTION }
+
+        assertEquals(2.0, interaction.boundingBox.width())
+        assertEquals(2.0, interaction.boundingBox.height())
+        assertEquals(2.0, interaction.boundingBox.depth())
+        val blocked = PlayerMoveEvent(player, Pos(0.0, 0.0, 2.0, 60f, -10f), false)
+        instance.eventNode().call(blocked)
+        assertEquals(Pos(0.0, 0.0, -2.0, 60f, -10f), blocked.newPosition)
+
+        player.teleport(Pos(0.0, 0.0, 0.0)).join()
+        val escape = PlayerMoveEvent(player, Pos(0.0, 0.0, 2.0), false)
+        instance.eventNode().call(escape)
+        assertEquals(Pos(0.0, 0.0, 2.0), escape.newPosition)
+
+        runtime.close().toCompletableFuture().also { tickUntil(instance, it::isDone) }.get()
+    }
+
+    @Test
+    fun `disconnect invalidates a runtime-scheduled bounce impulse`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val player =
+            Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
+                it.setInstance(instance, Pos(0.0, 0.0, -2.0)).join()
+                it.velocity = Vec(1.0, 2.0, 3.0)
+            }
+        val creation =
+            SceneRuntimeFactory.create(
+                    request(
+                        instance,
+                        ImmediateRenderer(instance),
+                        RecordingActions(),
+                        scene = collisionScene(NpcCollision(NpcCollisionMode.BOUNCE, 6.0)),
+                    )
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { creation.isDone }
+        val runtime = assertIs<SceneRuntimeCreationResult.Success>(creation.get()).runtime
+
+        val blocked = PlayerMoveEvent(player, Pos(0.0, 0.0, 2.0), false)
+        instance.eventNode().call(blocked)
+        instance.eventNode().call(PlayerDisconnectEvent(player))
+        instance.tick(0)
+
+        assertEquals(Pos(0.0, 0.0, -2.0), blocked.newPosition)
+        assertEquals(Vec(1.0, 2.0, 3.0), player.velocity)
+        runtime.close().toCompletableFuture().also { tickUntil(instance, it::isDone) }.get()
+    }
+
     @Test
     fun `readiness host exceptions become deterministic creation failures`() {
         val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
@@ -1112,6 +1181,41 @@ class SceneRuntimeLifecycleIntegrationTest {
                     )
                 ),
         )
+
+    private fun collisionScene(collision: NpcCollision): SceneDocument {
+        val base = scene()
+        val npc = base.elements.single() as Npc
+        val collider =
+            Npc(
+                id = npc.id,
+                group = npc.group,
+                transform =
+                    Transform(
+                        Vec3(0.0, 0.0, 0.0),
+                        EulerRotation(0.0, 0.0, 0.0),
+                        Vec3(1.0, 1.0, 1.0),
+                    ),
+                visible = true,
+                activation = ActivationPolicy.ALWAYS,
+                body = npc.body,
+                label = null,
+                labelOffset = npc.labelOffset,
+                look = LookBehavior.Fixed,
+                initialAnimation = npc.initialAnimation,
+                interactionBounds = LocalBounds(Vec3(0.0, 1.0, 0.0), Vec3(2.0, 2.0, 2.0)),
+                proximity = null,
+                bindings = emptyList(),
+                collision = collision,
+            )
+        return SceneDocument(
+            base.schemaVersion,
+            base.id,
+            base.metadata,
+            base.catalogs,
+            base.groups,
+            listOf(collider),
+        )
+    }
 
     private fun automaticScene(
         transform: Transform? = null,

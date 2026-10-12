@@ -2,14 +2,17 @@ package gg.grounds.scene.minestom.internal.runtime
 
 import gg.grounds.scene.format.LocalId
 import gg.grounds.scene.format.Npc
+import gg.grounds.scene.format.NpcCollisionMode
 import gg.grounds.scene.minestom.RenderedAssetHandle
 import gg.grounds.scene.minestom.SceneRenderTransform
+import gg.grounds.scene.minestom.internal.collision.requireSupportedCollisionGeometry
 import gg.grounds.scene.minestom.internal.geometry.WorldBounds
 import gg.grounds.scene.minestom.internal.geometry.affine
 import gg.grounds.scene.minestom.internal.geometry.transformed
 import java.util.concurrent.CompletionStage
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
+import net.minestom.server.collision.BoundingBox
 import net.minestom.server.coordinate.Pos
 import net.minestom.server.entity.metadata.other.InteractionMeta
 
@@ -30,6 +33,7 @@ internal class ActiveElement(
     private val completeResourceOperation: (Throwable?, Boolean) -> Unit = { _, _ -> },
     private val runtimeClosing: () -> Boolean = { false },
     private val schedule: (Runnable) -> Unit = Runnable::run,
+    private val colliderChanged: (ActiveElement) -> Unit = {},
 ) : AutoCloseable {
     private var runtimeTransform: SceneRenderTransform? = initialTransform
     private val closed = AtomicBoolean()
@@ -52,6 +56,7 @@ internal class ActiveElement(
         handles.mapIndexed { index, handle -> handlePartIds.getOrNull(index) to handle }
 
     fun updateRuntimeTransform(transform: SceneRenderTransform) {
+        val collisionGeometry = npc?.requireSupportedCollisionGeometry(transform)
         runtimeTransform = transform
         var failure: Throwable? = null
         fun attempt(action: () -> Unit) {
@@ -71,8 +76,17 @@ internal class ActiveElement(
         val entities = npcEntities
         if (authoredNpc != null && entities != null) {
             val affine = transform.affine()
-            val bounds = authoredNpc.interactionBounds.transformed(affine)
+            val bounds = checkNotNull(collisionGeometry).bounds
             attempt {
+                entities.interaction.boundingBox =
+                    if (authoredNpc.collision.mode == NpcCollisionMode.NONE)
+                        BoundingBox(0.0, 0.0, 0.0)
+                    else
+                        BoundingBox(
+                            bounds.max.x - bounds.min.x,
+                            bounds.max.y - bounds.min.y,
+                            bounds.max.z - bounds.min.z,
+                        )
                 (entities.interaction.entityMeta as InteractionMeta).apply {
                     width = max(bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z).toFloat()
                     height = (bounds.max.y - bounds.min.y).toFloat()
@@ -114,6 +128,7 @@ internal class ActiveElement(
                     }
                 }
         }
+        attempt { colliderChanged(this) }
         failure?.let { throw it }
     }
 

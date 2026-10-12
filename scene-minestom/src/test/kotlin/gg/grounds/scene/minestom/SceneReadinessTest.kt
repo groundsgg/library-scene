@@ -53,6 +53,37 @@ class SceneReadinessTest {
     }
 
     @Test
+    fun `collision geometry budget rejects solid bounds but leaves none unrestricted`() {
+        val base =
+            request(
+                RecordingRenderers(setOf(AssetKind.PROP, AssetKind.NPC_BODY)),
+                RecordingEffects(setOf(AssetKind.SOUND, AssetKind.PARTICLE)),
+                RecordingActions(setOf(ActionKey("test:application"))),
+            )
+
+        assertEquals(
+            emptyList(),
+            SceneReadiness.check(base.copy(scene = collisionScene(63.0, NpcCollisionMode.SOLID))),
+        )
+        assertEquals(
+            emptyList(),
+            SceneReadiness.check(
+                base.copy(scene = collisionScene(300_000.0, NpcCollisionMode.NONE))
+            ),
+        )
+        listOf(65.0, 300_000.0).forEach { height ->
+            val problem =
+                SceneReadiness.check(
+                        base.copy(scene = collisionScene(height, NpcCollisionMode.SOLID))
+                    )
+                    .single()
+            assertEquals(SceneRuntimeProblemCode.INVALID_SCENE, problem.code)
+            assertEquals("elements/action-npc/interactionBounds", problem.path)
+            assertEquals(LocalId("action-npc"), problem.elementId)
+        }
+    }
+
+    @Test
     fun `reports each independently missing host capability`() {
         assertMissing(
             SceneRuntimeProblemCode.MISSING_RENDERER,
@@ -339,6 +370,39 @@ class SceneReadinessTest {
                     ),
                 ),
         )
+
+    private fun collisionScene(height: Double, mode: NpcCollisionMode): SceneDocument {
+        val base = scene()
+        val elements =
+            base.elements.map { element ->
+                if (element !is Npc) element
+                else
+                    Npc(
+                        element.id,
+                        element.group,
+                        element.transform,
+                        element.visible,
+                        element.activation,
+                        element.body,
+                        element.label,
+                        element.labelOffset,
+                        element.look,
+                        element.initialAnimation,
+                        LocalBounds(Vec3(0.0, height / 2.0, 0.0), Vec3(1.0, height, 1.0)),
+                        element.proximity,
+                        element.bindings,
+                        NpcCollision(mode, 6.0),
+                    )
+            }
+        return SceneDocument(
+            base.schemaVersion,
+            base.id,
+            base.metadata,
+            base.catalogs,
+            base.groups,
+            elements,
+        )
+    }
 
     private fun assetCatalog() =
         AssetCatalog(

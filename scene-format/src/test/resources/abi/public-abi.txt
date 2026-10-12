@@ -37,6 +37,8 @@ CLASS gg.grounds.scene.format.LookBehavior$Fixed access=public|final|super signa
 CLASS gg.grounds.scene.format.LookBehavior$TrackNearest access=public|final|super signature=- super=java.lang.Object interfaces=[gg.grounds.scene.format.LookBehavior]
 CLASS gg.grounds.scene.format.NoConstraints access=public|final|super signature=- super=java.lang.Object interfaces=[gg.grounds.scene.format.ParameterConstraints]
 CLASS gg.grounds.scene.format.Npc access=public|final|super signature=- super=java.lang.Object interfaces=[gg.grounds.scene.format.SceneElement]
+CLASS gg.grounds.scene.format.NpcCollision access=public|final|super signature=- super=java.lang.Object interfaces=[]
+CLASS gg.grounds.scene.format.NpcCollisionMode access=public|final|super|enum signature=Ljava/lang/Enum<Lgg/grounds/scene/format/NpcCollisionMode;>; super=java.lang.Enum interfaces=[]
 CLASS gg.grounds.scene.format.ParameterConstraints access=public|interface|abstract signature=- super=java.lang.Object interfaces=[]
 CLASS gg.grounds.scene.format.PermissionCondition access=public|final|super signature=- super=java.lang.Object interfaces=[gg.grounds.scene.format.SceneCondition]
 CLASS gg.grounds.scene.format.PlaySoundAction access=public|final|super signature=- super=java.lang.Object interfaces=[gg.grounds.scene.format.SceneAction]
@@ -92,6 +94,9 @@ FIELD gg.grounds.scene.format.AssetKind.PROP Lgg/grounds/scene/format/AssetKind;
 FIELD gg.grounds.scene.format.AssetKind.SOUND Lgg/grounds/scene/format/AssetKind; access=public|static|final|enum signature=-
 FIELD gg.grounds.scene.format.LookBehavior$Fixed.INSTANCE Lgg/grounds/scene/format/LookBehavior$Fixed; access=public|static|final signature=-
 FIELD gg.grounds.scene.format.NoConstraints.INSTANCE Lgg/grounds/scene/format/NoConstraints; access=public|static|final signature=-
+FIELD gg.grounds.scene.format.NpcCollisionMode.BOUNCE Lgg/grounds/scene/format/NpcCollisionMode; access=public|static|final|enum signature=-
+FIELD gg.grounds.scene.format.NpcCollisionMode.NONE Lgg/grounds/scene/format/NpcCollisionMode; access=public|static|final|enum signature=-
+FIELD gg.grounds.scene.format.NpcCollisionMode.SOLID Lgg/grounds/scene/format/NpcCollisionMode; access=public|static|final|enum signature=-
 FIELD gg.grounds.scene.format.SceneGameMode.ADVENTURE Lgg/grounds/scene/format/SceneGameMode; access=public|static|final|enum signature=-
 FIELD gg.grounds.scene.format.SceneGameMode.CREATIVE Lgg/grounds/scene/format/SceneGameMode; access=public|static|final|enum signature=-
 FIELD gg.grounds.scene.format.SceneGameMode.SPECTATOR Lgg/grounds/scene/format/SceneGameMode; access=public|static|final|enum signature=-
@@ -467,12 +472,15 @@ METHOD gg.grounds.scene.format.NoConstraints.equals(Ljava/lang/Object;)Z access=
 METHOD gg.grounds.scene.format.NoConstraints.hashCode()I access=public signature=- exceptions=[]
 METHOD gg.grounds.scene.format.NoConstraints.toString()Ljava/lang/String; access=public signature=- exceptions=[]
 METHOD gg.grounds.scene.format.Npc.<init>(Ljava/lang/String;Ljava/lang/String;Lgg/grounds/scene/format/Transform;ZLgg/grounds/scene/format/ActivationPolicy;Ljava/lang/String;Lnet/kyori/adventure/text/Component;Lgg/grounds/scene/format/Vec3;Lgg/grounds/scene/format/LookBehavior;Ljava/lang/String;Lgg/grounds/scene/format/LocalBounds;Lgg/grounds/scene/format/ProximitySensor;Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V access=public|synthetic signature=- exceptions=[]
+METHOD gg.grounds.scene.format.Npc.<init>(Ljava/lang/String;Ljava/lang/String;Lgg/grounds/scene/format/Transform;ZLgg/grounds/scene/format/ActivationPolicy;Ljava/lang/String;Lnet/kyori/adventure/text/Component;Lgg/grounds/scene/format/Vec3;Lgg/grounds/scene/format/LookBehavior;Ljava/lang/String;Lgg/grounds/scene/format/LocalBounds;Lgg/grounds/scene/format/ProximitySensor;Ljava/util/List;Lgg/grounds/scene/format/NpcCollision;ILkotlin/jvm/internal/DefaultConstructorMarker;)V access=public|synthetic signature=- exceptions=[]
+METHOD gg.grounds.scene.format.Npc.<init>(Ljava/lang/String;Ljava/lang/String;Lgg/grounds/scene/format/Transform;ZLgg/grounds/scene/format/ActivationPolicy;Ljava/lang/String;Lnet/kyori/adventure/text/Component;Lgg/grounds/scene/format/Vec3;Lgg/grounds/scene/format/LookBehavior;Ljava/lang/String;Lgg/grounds/scene/format/LocalBounds;Lgg/grounds/scene/format/ProximitySensor;Ljava/util/List;Lgg/grounds/scene/format/NpcCollision;Lkotlin/jvm/internal/DefaultConstructorMarker;)V access=public|synthetic signature=- exceptions=[]
 METHOD gg.grounds.scene.format.Npc.<init>(Ljava/lang/String;Ljava/lang/String;Lgg/grounds/scene/format/Transform;ZLgg/grounds/scene/format/ActivationPolicy;Ljava/lang/String;Lnet/kyori/adventure/text/Component;Lgg/grounds/scene/format/Vec3;Lgg/grounds/scene/format/LookBehavior;Ljava/lang/String;Lgg/grounds/scene/format/LocalBounds;Lgg/grounds/scene/format/ProximitySensor;Ljava/util/List;Lkotlin/jvm/internal/DefaultConstructorMarker;)V access=public|synthetic signature=- exceptions=[]
 METHOD gg.grounds.scene.format.Npc.component1-52lPjcA()Ljava/lang/String; access=public|final signature=- exceptions=[]
 METHOD gg.grounds.scene.format.Npc.component10-oHF-QXw()Ljava/lang/String; access=public|final signature=- exceptions=[]
 METHOD gg.grounds.scene.format.Npc.component11()Lgg/grounds/scene/format/LocalBounds; access=public|final signature=- exceptions=[]
 METHOD gg.grounds.scene.format.Npc.component12()Lgg/grounds/scene/format/ProximitySensor; access=public|final signature=- exceptions=[]
 METHOD gg.grounds.scene.format.Npc.component13()Ljava/util/List; access=public|final signature=()Ljava/util/List<Lgg/grounds/scene/format/TriggerBinding;>; exceptions=[]
+METHOD gg.grounds.scene.format.Npc.component14()Lgg/grounds/scene/format/NpcCollision; access=public|final signature=- exceptions=[]
 METHOD gg.grounds.scene.format.Npc.component2-oHF-QXw()Ljava/lang/String; access=public|final signature=- exceptions=[]
 METHOD gg.grounds.scene.format.Npc.component3()Lgg/grounds/scene/format/Transform; access=public|final signature=- exceptions=[]
 METHOD gg.grounds.scene.format.Npc.component4()Z access=public|final signature=- exceptions=[]
@@ -485,6 +493,7 @@ METHOD gg.grounds.scene.format.Npc.equals(Ljava/lang/Object;)Z access=public sig
 METHOD gg.grounds.scene.format.Npc.getActivation()Lgg/grounds/scene/format/ActivationPolicy; access=public signature=- exceptions=[]
 METHOD gg.grounds.scene.format.Npc.getBindings()Ljava/util/List; access=public|final signature=()Ljava/util/List<Lgg/grounds/scene/format/TriggerBinding;>; exceptions=[]
 METHOD gg.grounds.scene.format.Npc.getBody-URjDaG4()Ljava/lang/String; access=public|final signature=- exceptions=[]
+METHOD gg.grounds.scene.format.Npc.getCollision()Lgg/grounds/scene/format/NpcCollision; access=public|final signature=- exceptions=[]
 METHOD gg.grounds.scene.format.Npc.getGroup-oHF-QXw()Ljava/lang/String; access=public signature=- exceptions=[]
 METHOD gg.grounds.scene.format.Npc.getId-52lPjcA()Ljava/lang/String; access=public signature=- exceptions=[]
 METHOD gg.grounds.scene.format.Npc.getInitialAnimation-oHF-QXw()Ljava/lang/String; access=public|final signature=- exceptions=[]
@@ -497,6 +506,21 @@ METHOD gg.grounds.scene.format.Npc.getTransform()Lgg/grounds/scene/format/Transf
 METHOD gg.grounds.scene.format.Npc.getVisible()Z access=public signature=- exceptions=[]
 METHOD gg.grounds.scene.format.Npc.hashCode()I access=public signature=- exceptions=[]
 METHOD gg.grounds.scene.format.Npc.toString()Ljava/lang/String; access=public signature=- exceptions=[]
+METHOD gg.grounds.scene.format.NpcCollision.<init>()V access=public signature=- exceptions=[]
+METHOD gg.grounds.scene.format.NpcCollision.<init>(Lgg/grounds/scene/format/NpcCollisionMode;D)V access=public signature=- exceptions=[]
+METHOD gg.grounds.scene.format.NpcCollision.<init>(Lgg/grounds/scene/format/NpcCollisionMode;DILkotlin/jvm/internal/DefaultConstructorMarker;)V access=public|synthetic signature=- exceptions=[]
+METHOD gg.grounds.scene.format.NpcCollision.component1()Lgg/grounds/scene/format/NpcCollisionMode; access=public|final signature=- exceptions=[]
+METHOD gg.grounds.scene.format.NpcCollision.component2()D access=public|final signature=- exceptions=[]
+METHOD gg.grounds.scene.format.NpcCollision.copy$default(Lgg/grounds/scene/format/NpcCollision;Lgg/grounds/scene/format/NpcCollisionMode;DILjava/lang/Object;)Lgg/grounds/scene/format/NpcCollision; access=public|static|synthetic signature=- exceptions=[]
+METHOD gg.grounds.scene.format.NpcCollision.copy(Lgg/grounds/scene/format/NpcCollisionMode;D)Lgg/grounds/scene/format/NpcCollision; access=public|final signature=- exceptions=[]
+METHOD gg.grounds.scene.format.NpcCollision.equals(Ljava/lang/Object;)Z access=public signature=- exceptions=[]
+METHOD gg.grounds.scene.format.NpcCollision.getBounceStrength()D access=public|final signature=- exceptions=[]
+METHOD gg.grounds.scene.format.NpcCollision.getMode()Lgg/grounds/scene/format/NpcCollisionMode; access=public|final signature=- exceptions=[]
+METHOD gg.grounds.scene.format.NpcCollision.hashCode()I access=public signature=- exceptions=[]
+METHOD gg.grounds.scene.format.NpcCollision.toString()Ljava/lang/String; access=public signature=- exceptions=[]
+METHOD gg.grounds.scene.format.NpcCollisionMode.getEntries()Lkotlin/enums/EnumEntries; access=public|static signature=()Lkotlin/enums/EnumEntries<Lgg/grounds/scene/format/NpcCollisionMode;>; exceptions=[]
+METHOD gg.grounds.scene.format.NpcCollisionMode.valueOf(Ljava/lang/String;)Lgg/grounds/scene/format/NpcCollisionMode; access=public|static signature=- exceptions=[]
+METHOD gg.grounds.scene.format.NpcCollisionMode.values()[Lgg/grounds/scene/format/NpcCollisionMode; access=public|static signature=- exceptions=[]
 METHOD gg.grounds.scene.format.PermissionCondition.<init>(Ljava/lang/String;)V access=public signature=- exceptions=[]
 METHOD gg.grounds.scene.format.PermissionCondition.component1()Ljava/lang/String; access=public|final signature=- exceptions=[]
 METHOD gg.grounds.scene.format.PermissionCondition.copy$default(Lgg/grounds/scene/format/PermissionCondition;Ljava/lang/String;ILjava/lang/Object;)Lgg/grounds/scene/format/PermissionCondition; access=public|static|synthetic signature=- exceptions=[]

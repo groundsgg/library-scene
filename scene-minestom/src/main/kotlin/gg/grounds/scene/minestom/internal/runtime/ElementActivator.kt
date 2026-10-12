@@ -4,6 +4,7 @@ import gg.grounds.scene.format.AssetKind
 import gg.grounds.scene.format.CompositeProp
 import gg.grounds.scene.format.LocalId
 import gg.grounds.scene.format.Npc
+import gg.grounds.scene.format.NpcCollisionMode
 import gg.grounds.scene.format.Prop
 import gg.grounds.scene.format.SceneElement
 import gg.grounds.scene.format.Vec3
@@ -13,6 +14,7 @@ import gg.grounds.scene.minestom.SceneAssetRendererFactory
 import gg.grounds.scene.minestom.SceneClock
 import gg.grounds.scene.minestom.SceneRenderTransform
 import gg.grounds.scene.minestom.internal.RendererCapabilityKey
+import gg.grounds.scene.minestom.internal.collision.requireSupportedCollisionGeometry
 import gg.grounds.scene.minestom.internal.elapsedNanos
 import gg.grounds.scene.minestom.internal.geometry.affine
 import gg.grounds.scene.minestom.internal.geometry.transformed
@@ -22,6 +24,7 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.CompletionStage
 import kotlin.math.max
+import net.minestom.server.collision.BoundingBox
 import net.minestom.server.coordinate.Vec
 import net.minestom.server.entity.Entity
 import net.minestom.server.entity.EntityType
@@ -42,6 +45,7 @@ internal class ElementActivator(
     private val rendererFactories: Map<RendererCapabilityKey, SceneAssetRendererFactory>,
     private val clock: SceneClock,
     private val schedule: (Runnable) -> Unit = Runnable::run,
+    private val colliderChanged: (ActiveElement) -> Unit = {},
 ) {
     private val interactionIds = mutableMapOf<UUID, LocalId>()
     private val resourceDrain = ResourceDrain()
@@ -72,6 +76,17 @@ internal class ElementActivator(
                 retainUntilClaimed,
                 onUnrecoverableContinuation,
             )
+
+        if (npcElement != null) {
+            try {
+                npcElement.requireSupportedCollisionGeometry(
+                    SceneRenderTransform(npcElement.transform, null)
+                )
+            } catch (error: IllegalArgumentException) {
+                activation.failed(error)
+                return activation
+            }
+        }
 
         npcElement
             ?.takeIf { it.visible }
@@ -252,7 +267,15 @@ internal class ElementActivator(
         var label: Entity? = null
         try {
             val transform = SceneRenderTransform(npc.transform, null)
-            val bounds = npc.interactionBounds.transformed(transform.affine())
+            val bounds = npc.requireSupportedCollisionGeometry(transform).bounds
+            interaction.boundingBox =
+                if (npc.collision.mode == NpcCollisionMode.NONE) BoundingBox(0.0, 0.0, 0.0)
+                else
+                    BoundingBox(
+                        bounds.max.x - bounds.min.x,
+                        bounds.max.y - bounds.min.y,
+                        bounds.max.z - bounds.min.z,
+                    )
             (interaction.entityMeta as InteractionMeta).apply {
                 width = max(bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z).toFloat()
                 height = (bounds.max.y - bounds.min.y).toFloat()
@@ -513,6 +536,7 @@ internal class ElementActivator(
                     resourceDrain::completeOperation,
                     resourceDrain::isClosing,
                     schedule,
+                    colliderChanged,
                 )
             if (retainUntilClaimed) published = active
             future.complete(active)

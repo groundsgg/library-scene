@@ -5,6 +5,7 @@ import gg.grounds.scene.minestom.*
 import gg.grounds.scene.minestom.internal.action.ChainOutcome
 import gg.grounds.scene.minestom.internal.action.SceneActionDiagnostic
 import gg.grounds.scene.minestom.internal.action.SceneActionExecutor
+import gg.grounds.scene.minestom.internal.collision.NpcCollisionController
 import gg.grounds.scene.minestom.internal.runtime.ActiveElement
 import gg.grounds.scene.minestom.internal.runtime.ElementActivation
 import gg.grounds.scene.minestom.internal.runtime.ElementActivator
@@ -66,6 +67,7 @@ private constructor(
     private val look = LookController(request.clock, request.playerPolicy)
     private val spatial: ActivationController
     private val activator: ElementActivator
+    private val collisions: NpcCollisionController
     private val triggerEngine: TriggerEngine
     private val actionExecutor: SceneActionExecutor
     private val events: MinestomSceneEvents
@@ -96,13 +98,25 @@ private constructor(
                 request.config.cellEdge,
             )
         spatial = ActivationController(index, request.config, request.clock)
+        lateinit var collisionController: NpcCollisionController
         activator =
             ElementActivator(
                 request.instance,
                 capabilities.rendererFactories,
                 request.clock,
                 ::marshal,
+                { active -> collisionController.colliderChanged(active) },
             )
+        collisionController =
+            NpcCollisionController(
+                request.instance,
+                request.playerPolicy,
+                request.clock,
+                ::marshal,
+                activator::interactionElementId,
+                ::activeElement,
+            )
+        collisions = collisionController
         triggerEngine =
             TriggerEngine(
                 request.instance,
@@ -134,6 +148,7 @@ private constructor(
                 ::activeElement,
                 request.clock::nanoTime,
                 ::acceptTrigger,
+                collisions::move,
                 ::removePlayerState,
             )
     }
@@ -256,6 +271,7 @@ private constructor(
                     activeElements.remove(entry.elementId, entry.active)
                     error("Activation ownership could not be claimed.")
                 }
+                collisions.colliderChanged(entry.active)
             }
             clearPreparedAlways()
             true
@@ -521,6 +537,7 @@ private constructor(
                                 activeElements.remove(elementId, active)
                                 error("Activation ownership could not be claimed.")
                             }
+                            collisions.colliderChanged(active)
                         } catch (applyFailure: Throwable) {
                             if (sensorPublicationAttempted) {
                                 try {
@@ -564,7 +581,10 @@ private constructor(
         invalidateElementChains(elementId)
         look.removeElement(elementId)
         sensors.deactivate(elementId)
-        activeElements.remove(elementId)?.let(activator::deactivate)
+        activeElements.remove(elementId)?.let { active ->
+            collisions.colliderRemoved(active)
+            activator.deactivate(active)
+        }
         spatial.markInactive(elementId)
     }
 
@@ -650,6 +670,7 @@ private constructor(
     }
 
     private fun removePlayerState(player: Player) {
+        collisions.disconnect(player.uuid)
         try {
             reevaluateActivationDesires(player.uuid).forEach(::abortPendingActivation)
         } catch (error: Throwable) {
@@ -727,6 +748,7 @@ private constructor(
             return
         }
         closed = true
+        collisions.close()
         val drain = activator.beginCloseDrain()
         runtimeGeneration++
         logicalStates.values.forEach { it.generation++ }
@@ -806,6 +828,7 @@ private constructor(
             .sortedBy { it.elementId.value }
             .forEach { active ->
                 try {
+                    collisions.colliderRemoved(active)
                     activator.deactivate(active)
                 } catch (error: Throwable) {
                     logFailure("ELEMENT_CLOSE_FAILED", active.elementId, null, error)

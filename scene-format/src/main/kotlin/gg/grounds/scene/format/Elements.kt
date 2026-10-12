@@ -64,6 +64,7 @@ private constructor(
     val interactionBounds: LocalBounds,
     val proximity: ProximitySensor?,
     val bindings: List<TriggerBinding>,
+    val collision: NpcCollision,
     @Suppress("unused") private val canonical: Unit,
 ) : SceneElement {
     constructor(
@@ -94,6 +95,40 @@ private constructor(
         interactionBounds,
         proximity,
         immutableListCopy(bindings),
+        NpcCollision(),
+        Unit,
+    )
+
+    constructor(
+        id: LocalId,
+        group: LocalId?,
+        transform: Transform,
+        visible: Boolean = true,
+        activation: ActivationPolicy = ActivationPolicy.AUTOMATIC,
+        body: AssetKey,
+        label: Component?,
+        labelOffset: Vec3,
+        look: LookBehavior,
+        initialAnimation: LocalId?,
+        interactionBounds: LocalBounds,
+        proximity: ProximitySensor?,
+        bindings: List<TriggerBinding>,
+        collision: NpcCollision,
+    ) : this(
+        id,
+        group,
+        transform,
+        visible,
+        activation,
+        body,
+        label,
+        labelOffset,
+        look,
+        initialAnimation,
+        interactionBounds,
+        proximity,
+        immutableListCopy(bindings),
+        collision,
         Unit,
     )
 }

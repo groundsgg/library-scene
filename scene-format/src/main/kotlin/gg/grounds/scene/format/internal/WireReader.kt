@@ -102,6 +102,7 @@ internal object WireReader {
                             "bindings",
                         ),
                     path,
+                    setOf("collision"),
                 ) { value ->
                     NpcWire(
                         string(value, "id", path),
@@ -116,6 +117,11 @@ internal object WireReader {
                         nullableString(value, "initialAnimation", path),
                         bounds(value["interactionBounds"], childPath(path, "interactionBounds")),
                         nullable(value, "proximity", path, ::proximity),
+                        if (value.has("collision")) {
+                            collision(value["collision"], childPath(path, "collision"))
+                        } else {
+                            null
+                        },
                         array(value["bindings"], childPath(path, "bindings")).mapIndexed {
                             index,
                             child ->
@@ -187,6 +193,26 @@ internal object WireReader {
         obj(node, setOf("enterRadius", "exitRadius"), path) { value ->
             ProximityWire(double(value, "enterRadius", path), double(value, "exitRadius", path))
         }
+
+    private fun collision(node: JsonNode, path: String) =
+        obj(node, emptySet(), path, setOf("mode", "bounceStrength")) { value ->
+            NpcCollisionWire(
+                if (value.has("mode")) enum(value, "mode", path, COLLISION_MODE_NAMES) else "none",
+                if (value.has("bounceStrength")) collisionStrength(value, path) else 6.0,
+            )
+        }
+
+    private fun collisionStrength(node: JsonNode, path: String): Double {
+        val strength = decimal(node, "bounceStrength", path)
+        if (strength < BigDecimal.ZERO || strength > MAX_COLLISION_STRENGTH) {
+            fail(
+                childPath(path, "bounceStrength"),
+                "INVALID_ACTION_ARGUMENT",
+                "Collision bounce strength must be between 0.0 and 20.0 inclusive.",
+            )
+        }
+        return strength.toDouble()
+    }
 
     private fun binding(node: JsonNode, path: String) =
         obj(
@@ -371,12 +397,13 @@ internal object WireReader {
         node: JsonNode,
         fields: Set<String>?,
         path: String,
+        optionalFields: Set<String> = emptySet(),
         read: (JsonNode) -> T,
     ): T {
         if (!node.isObject) fail(path, "MALFORMED_JSON", "Expected an object.")
         if (fields != null) {
             val names = node.properties().map { it.key }.toSet()
-            val unknown = names.firstOrNull { it !in fields }
+            val unknown = names.firstOrNull { it !in fields && it !in optionalFields }
             if (unknown != null) fail(childPath(path, unknown), "UNKNOWN_FIELD", "Unknown field.")
             val missing = fields.firstOrNull { it !in names }
             if (missing != null)
@@ -458,6 +485,8 @@ internal object WireReader {
         throw DecodeFailure(path, code, message)
 
     private val ACTIVATION_NAMES = setOf("AUTOMATIC", "ALWAYS")
+    private val COLLISION_MODE_NAMES = setOf("none", "solid", "bounce")
+    private val MAX_COLLISION_STRENGTH = BigDecimal.valueOf(20)
     private val TRIGGER_NAMES =
         setOf(
             "LEFT_CLICK",
