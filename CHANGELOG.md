@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/groundsgg/library-scene/compare/v0.2.1...v0.3.0) (2026-10-12)
+
+
+### Features
+
+* add optional NPC collision and configurable bounce ([#9](https://github.com/groundsgg/library-scene/issues/9)) ([62461a5](https://github.com/groundsgg/library-scene/commit/62461a536ca17f9d57d72a493cc3fc0e9e2e162d))
+
 ## [0.2.1](https://github.com/groundsgg/library-scene/compare/v0.2.0...v0.2.1) (2026-09-07)
 
 
