@@ -91,12 +91,13 @@
 
 ### Task 4: Consumer integration and isolated acceptance
 
-**Repositories:** existing Scene derivation worker and minestom-lobby consumers, then GitOps only for an isolated test host.
+**Repositories:** existing Scene derivation worker and minestom-lobby consumers, `containers` for the immutable editor JAR in the buildserver image, then GitOps only for an isolated test host or a guarded empty buildserver rollout.
 
 **Interfaces:** New settings must decode in the derivation worker and host before being authored/published; no manual versions/tags/releases.
 
 - [ ] Review and merge green library PR, merge generated Release Please PR when checks pass, and verify published artifact coordinates and the additive model ABI.
 - [ ] Resolve actual consumer dependency declarations with `rg 'scene-(format|minestom|testkit)'` in the existing worker and lobby worktrees; update to the generated released version only. Test a literal collision-bearing scene through production validation/preparation; test an unchanged old scene too. Verify packaged dependency classes in actual release artifacts.
 - [ ] Integrate/release the editor and consumers through reviewed green PRs and generated Release Please PRs; record exact commits, artifact hashes and unresolved deployment gates. Do not claim active deployments from source merges alone.
+- [ ] Update `containers/buildserver/Dockerfile`, `buildserver/README.md` and `scripts/test-buildserver-scene-editor-pin.sh` with the actual released editor Maven URL and downloaded JAR SHA256. Keep the BuildSystem base digest unchanged. Verify the built image contains exactly the intended plugin artifact, then use its generated Release Please image version/digest in GitOps. Roll the authoring buildserver only after a fresh empty-player check; stop before affecting an occupied server.
 - [ ] Use an isolated temporary map/host and existing zero-player/ownership guards for live checks. Give the user commands for mode/strength changes and verify walking, sprint crossing, jumping past/over, low/high strength, reapproach, two players, disconnect and NPC removal. No normal pins/global PackSets/occupied fleets change.
 - [ ] Record actual client results and clean only owned temporary infrastructure after users leave. Keep aggregate Masterplan gates open until all required evidence exists.
