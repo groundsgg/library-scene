@@ -402,6 +402,7 @@ class SceneRuntimeLifecycleIntegrationTest {
             )
         val schedulerFailure = IllegalStateException("transient owner scheduler rejection")
         val rejected = AtomicBoolean()
+        val foreignFallbackQueued = CountDownLatch(1)
         val failures = mutableListOf<Triple<String, Throwable, Thread>>()
         val despawnThreads = mutableListOf<Thread>()
         instance.eventNode().addListener(EntityDespawnEvent::class.java) {
@@ -420,6 +421,9 @@ class SceneRuntimeLifecycleIntegrationTest {
                             throw schedulerFailure
                         }
                         instance.scheduler().execute(action)
+                        if (Thread.currentThread() !== ownerThread && rejected.get()) {
+                            foreignFallbackQueued.countDown()
+                        }
                     },
                     failureObserver = { code, error ->
                         failures += Triple(code, error, Thread.currentThread())
@@ -435,6 +439,7 @@ class SceneRuntimeLifecycleIntegrationTest {
         assertFalse(close.isDone)
         gate.close()
         gate.settled.awaitReady()
+        foreignFallbackQueued.awaitReady()
         tickUntil(instance) { close.isDone }
 
         val closeFailure = assertFailsWith<ExecutionException> { close.get() }.cause
