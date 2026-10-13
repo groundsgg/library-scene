@@ -16,6 +16,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.locks.LockSupport
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -77,6 +78,7 @@ class SceneRuntimeLifecycleIntegrationTest {
         player.refreshReceivedTeleportId(player.lastSentTeleportId)
         connection.packets.clear()
         connection.setClientState(ConnectionState.PLAY)
+        player.refreshOnGround(true)
 
         player.addPacketToQueue(ClientPlayerPositionPacket(Pos(0.0, 0.0, 2.0), true, false))
         player.tick(0)
@@ -94,10 +96,10 @@ class SceneRuntimeLifecycleIntegrationTest {
         assertEquals(Vec.ZERO, correction.delta())
         val velocity = movementPackets[1] as EntityVelocityPacket
         assertEquals(-0.681, velocity.velocity().z(), 1e-9)
-        assertEquals(0.0, velocity.velocity().y(), 1e-9)
+        assertEquals(0.2, velocity.velocity().y(), 1e-9)
         assertEquals(Pos(0.0, 0.0, -2.0), player.position)
         assertEquals(-13.62, player.velocity.z(), 1e-9)
-        assertEquals(0.0, player.velocity.y(), 1e-9)
+        assertEquals(4.0, player.velocity.y(), 1e-9)
 
         repeat(3) {
             PlayerPositionListener.playerPositionListener(
@@ -440,7 +442,14 @@ class SceneRuntimeLifecycleIntegrationTest {
         gate.close()
         gate.settled.awaitReady()
         foreignFallbackQueued.awaitReady()
-        tickUntil(instance) { close.isDone }
+        // Other chunk continuations may still be foreign: await the entire owner drain,
+        // not a fixed count of fast ticks after only the first fallback was queued.
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (!close.isDone && System.nanoTime() < deadline) {
+            instance.tick(0)
+            if (!close.isDone) LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(10))
+        }
+        assertTrue(close.isDone, "owner drain did not complete within 5 seconds")
 
         val closeFailure = assertFailsWith<ExecutionException> { close.get() }.cause
         assertSame(schedulerFailure, closeFailure)

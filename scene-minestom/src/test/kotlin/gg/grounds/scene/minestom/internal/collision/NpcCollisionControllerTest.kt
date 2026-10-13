@@ -39,6 +39,47 @@ import org.junit.jupiter.api.Test
 
 class NpcCollisionControllerTest {
     @Test
+    fun `grounded bounce adds one small lift without stacking during held contact`() {
+        val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0, 1.5))
+        fixture.player.refreshOnGround(true)
+        fixture.connection.packets.clear()
+
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.runScheduled()
+
+        assertEquals(4.0, fixture.player.velocity.y(), 1e-9)
+        assertEquals(-13.62, fixture.player.velocity.z(), 1e-9)
+        assertEquals(0.2, fixture.velocityPackets().single().velocity().y(), 1e-9)
+        fixture.clock.advanceMillis(250)
+        repeat(3) {
+            fixture.move(Pos(0.0, 0.0, 2.0))
+            fixture.runScheduled()
+        }
+        assertEquals(1, fixture.velocityPackets().size)
+    }
+
+    @Test
+    fun `bounce preserves airborne and flying vertical movement and zero distance has no lift`() {
+        listOf(false to -3.0, false to 8.0, true to 0.0).forEach { (flying, vertical) ->
+            val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0, 0.5))
+            fixture.player.refreshOnGround(flying)
+            fixture.player.refreshFlying(flying)
+            fixture.player.velocity = Vec(0.0, vertical, 0.0)
+            fixture.connection.packets.clear()
+            fixture.move(Pos(0.0, 0.0, 2.0))
+            fixture.runScheduled()
+            assertEquals(vertical, fixture.player.velocity.y(), 1e-9)
+        }
+        val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0, 0.0))
+        fixture.player.refreshOnGround(true)
+        fixture.connection.packets.clear()
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.runScheduled()
+        assertTrue(fixture.velocityPackets().isEmpty())
+        assertEquals(Vec.ZERO, fixture.player.velocity)
+    }
+
+    @Test
     fun `velocity uncancelled after observer still consumes the contact`() {
         val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0))
         fixture.connection.packets.clear()

@@ -181,7 +181,9 @@ internal class NpcCollisionController(
                                 player,
                                 Vec(
                                     currentHit.outward.x() * currentStrength,
-                                    velocity.y(),
+                                    if (player.isOnGround && !player.isFlying)
+                                        maxOf(velocity.y(), GROUNDED_BOUNCE_LIFT)
+                                    else velocity.y(),
                                     currentHit.outward.z() * currentStrength,
                                 ),
                             )
@@ -346,6 +348,8 @@ internal class NpcCollisionController(
     }
 
     private companion object {
+        // 0.2 blocks/tick: a small hop, well below an ordinary jump.
+        const val GROUNDED_BOUNCE_LIFT = 4.0
         val BOUNCE_INTERVAL_NANOS = TimeUnit.MILLISECONDS.toNanos(250)
         val LOGGER = LoggerFactory.getLogger(NpcCollisionController::class.java)
     }
