@@ -279,9 +279,10 @@ internal class NpcCollisionController(
     private fun applyVelocity(player: Player, velocity: Vec): Boolean {
         var observed: EntityVelocityEvent? = null
         val observer =
-            EventListener.of(EntityVelocityEvent::class.java) { event ->
-                if (event.entity === player) observed = event
-            }
+            EventListener.builder(EntityVelocityEvent::class.java)
+                .ignoreCancelled(false)
+                .handler { event -> if (event.entity === player) observed = event }
+                .build()
         val eventNode = instance.eventNode()
         eventNode.addListener(observer)
         try {

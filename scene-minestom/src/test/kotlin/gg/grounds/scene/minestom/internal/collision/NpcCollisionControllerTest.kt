@@ -20,8 +20,12 @@ import net.minestom.server.entity.Entity
 import net.minestom.server.entity.EntityType
 import net.minestom.server.entity.GameMode
 import net.minestom.server.entity.Player
+import net.minestom.server.event.EventFilter
+import net.minestom.server.event.EventListener
+import net.minestom.server.event.EventNode
 import net.minestom.server.event.entity.EntityVelocityEvent
 import net.minestom.server.event.player.PlayerMoveEvent
+import net.minestom.server.event.trait.InstanceEvent
 import net.minestom.server.instance.InstanceContainer
 import net.minestom.server.listener.PlayerPositionListener
 import net.minestom.server.network.packet.client.play.ClientPlayerPositionPacket
@@ -34,6 +38,34 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 
 class NpcCollisionControllerTest {
+    @Test
+    fun `velocity uncancelled after observer still consumes the contact`() {
+        val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0))
+        fixture.connection.packets.clear()
+        fixture.instance.eventNode().addListener(EntityVelocityEvent::class.java) { event ->
+            if (event.entity === fixture.player) event.isCancelled = true
+        }
+        val child: EventNode<InstanceEvent> =
+            EventNode.type("uncancel-velocity", EventFilter.INSTANCE)
+        child.addListener(
+            EventListener.builder(EntityVelocityEvent::class.java)
+                .ignoreCancelled(false)
+                .handler { event -> event.isCancelled = false }
+                .build()
+        )
+        fixture.instance.eventNode().addChild(child)
+
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.runScheduled()
+        assertEquals(1, fixture.velocityPackets().size)
+
+        fixture.clock.advanceMillis(250)
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.runScheduled()
+
+        assertEquals(1, fixture.velocityPackets().size)
+    }
+
     @Test
     fun `cancelled native velocity can retry the same contact immediately`() {
         val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0))
