@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/groundsgg/library-scene/compare/v0.3.0...v0.4.0) (2026-10-13)
+
+
+### Features
+
+* fractional NPC bounce distance and retryable soft impulses ([#11](https://github.com/groundsgg/library-scene/issues/11)) ([dccdafc](https://github.com/groundsgg/library-scene/commit/dccdafcff2f1909271cfd5e1a757e25c790e1b9c))
+
 ## [0.3.0](https://github.com/groundsgg/library-scene/compare/v0.2.1...v0.3.0) (2026-10-12)
 
 
