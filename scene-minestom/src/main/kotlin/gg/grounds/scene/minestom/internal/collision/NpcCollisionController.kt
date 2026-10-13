@@ -33,7 +33,7 @@ internal class NpcCollisionController(
     private val instance: Instance,
     private val playerPolicy: ScenePlayerPolicy,
     private val clock: SceneClock,
-    private val schedule: (Runnable) -> Unit,
+    private val schedule: (Player, Runnable) -> Unit,
     private val interactionElementId: (UUID) -> LocalId?,
     private val activeElement: (LocalId) -> ActiveElement?,
 ) : AutoCloseable {
@@ -156,6 +156,7 @@ internal class NpcCollisionController(
         contact.pending = true
         try {
             schedule(
+                player,
                 Runnable {
                     try {
                         val currentContact = contacts[player.uuid]
@@ -190,7 +191,7 @@ internal class NpcCollisionController(
                     } finally {
                         contact.pending = false
                     }
-                }
+                },
             )
         } catch (error: Throwable) {
             contact.pending = false

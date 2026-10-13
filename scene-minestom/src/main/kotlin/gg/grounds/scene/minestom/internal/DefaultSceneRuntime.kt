@@ -112,7 +112,7 @@ private constructor(
                 request.instance,
                 request.playerPolicy,
                 request.clock,
-                ::marshal,
+                { player, task -> player.scheduler().scheduleEndOfTick(task) },
                 activator::interactionElementId,
                 ::activeElement,
             )

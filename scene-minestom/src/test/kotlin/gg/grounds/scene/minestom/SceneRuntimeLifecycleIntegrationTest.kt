@@ -40,13 +40,97 @@ import net.minestom.server.instance.Chunk
 import net.minestom.server.instance.ChunkLoader
 import net.minestom.server.instance.Instance
 import net.minestom.server.instance.InstanceContainer
+import net.minestom.server.listener.PlayerPositionListener
+import net.minestom.server.network.ConnectionState
+import net.minestom.server.network.packet.client.play.ClientPlayerPositionPacket
+import net.minestom.server.network.packet.client.play.ClientTeleportConfirmPacket
 import net.minestom.server.network.packet.server.SendablePacket
+import net.minestom.server.network.packet.server.play.EntityVelocityPacket
+import net.minestom.server.network.packet.server.play.PlayerPositionAndLookPacket
 import net.minestom.server.network.player.GameProfile
 import net.minestom.server.network.player.PlayerConnection
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 
 class SceneRuntimeLifecycleIntegrationTest {
+    @Test
+    fun `native collision corrects then delivers one soft impulse in the same player tick`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val connection = FakeConnection()
+        val player =
+            Player(connection, GameProfile(UUID.randomUUID(), "Alex")).also {
+                it.setInstance(instance, Pos(0.0, 0.0, -2.0)).join()
+                it.setNoGravity(true)
+            }
+        val creation =
+            SceneRuntimeFactory.create(
+                    request(
+                        instance,
+                        ImmediateRenderer(instance),
+                        RecordingActions(),
+                        scene = collisionScene(NpcCollision(NpcCollisionMode.BOUNCE, 6.0, 1.5)),
+                    )
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { creation.isDone }
+        val runtime = assertIs<SceneRuntimeCreationResult.Success>(creation.get()).runtime
+        player.refreshReceivedTeleportId(player.lastSentTeleportId)
+        connection.packets.clear()
+        connection.setClientState(ConnectionState.PLAY)
+
+        player.addPacketToQueue(ClientPlayerPositionPacket(Pos(0.0, 0.0, 2.0), true, false))
+        player.tick(0)
+
+        val movementPackets =
+            connection.packets.filter {
+                it is PlayerPositionAndLookPacket || it is EntityVelocityPacket
+            }
+        assertEquals(
+            listOf(PlayerPositionAndLookPacket::class, EntityVelocityPacket::class),
+            movementPackets.map { it::class },
+        )
+        val correction = movementPackets[0] as PlayerPositionAndLookPacket
+        assertEquals(Pos(0.0, 0.0, -2.0), correction.position())
+        assertEquals(Vec.ZERO, correction.delta())
+        val velocity = movementPackets[1] as EntityVelocityPacket
+        assertEquals(-0.681, velocity.velocity().z(), 1e-9)
+        assertEquals(0.0, velocity.velocity().y(), 1e-9)
+        assertEquals(Pos(0.0, 0.0, -2.0), player.position)
+        assertEquals(-13.62, player.velocity.z(), 1e-9)
+        assertEquals(0.0, player.velocity.y(), 1e-9)
+
+        repeat(3) {
+            PlayerPositionListener.playerPositionListener(
+                ClientPlayerPositionPacket(Pos(0.0, 0.0, 2.0), true, false),
+                player,
+            )
+        }
+        assertEquals(
+            2,
+            connection.packets.count {
+                it is PlayerPositionAndLookPacket || it is EntityVelocityPacket
+            },
+        )
+
+        val confirmConstructor =
+            ClientTeleportConfirmPacket::class.java.declaredConstructors.single()
+        val confirm =
+            if (confirmConstructor.parameterCount == 1)
+                confirmConstructor.newInstance(player.lastSentTeleportId)
+            else confirmConstructor.newInstance(player.lastSentTeleportId, player.position)
+        PlayerPositionListener.teleportConfirmListener(
+            confirm as ClientTeleportConfirmPacket,
+            player,
+        )
+        PlayerPositionListener.playerPositionListener(
+            ClientPlayerPositionPacket(Pos(0.0, 0.0, -3.0), true, false),
+            player,
+        )
+        assertEquals(Pos(0.0, 0.0, -3.0), player.position)
+
+        runtime.close().toCompletableFuture().also { tickUntil(instance, it::isDone) }.get()
+    }
+
     @Test
     fun `runtime event node blocks native npc bounds and permits initial-overlap escape`() {
         val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
@@ -1711,7 +1795,11 @@ class SceneRuntimeLifecycleIntegrationTest {
     }
 
     private class FakeConnection : PlayerConnection() {
-        override fun sendPacket(packet: SendablePacket) = Unit
+        val packets = mutableListOf<SendablePacket>()
+
+        override fun sendPacket(packet: SendablePacket) {
+            packets += packet
+        }
 
         override fun getRemoteAddress(): SocketAddress = InetSocketAddress(0)
     }
