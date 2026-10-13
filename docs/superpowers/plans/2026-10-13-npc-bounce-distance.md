@@ -1,6 +1,6 @@
 # NPC Bounce Distance Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans for primary format/runtime/integration and superpowers:subagent-driven-development for the scoped editor task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Fractional block-based authoring and a non-sticking outward bounce.
 **Architecture:** Add a distinct distance representation without reinterpreting
@@ -43,9 +43,11 @@ retaining old two-argument/default interfaces and legacy semantics.
 
 ### Task 2: Native runtime contact and distance
 
-Runtime presentation choice is pending the user's asynchronous answer. The
-impulse steps below remain provisional; do not implement them before the choice
-and the packet-flow findings have been reconciled into this task/spec.
+User chose the soft impulse. The native correction preserves velocity, but a
+new contact encountered during cooldown is currently latched before delivery and
+can never retry. Track pending/delivered separately; expire cooldown on delivery,
+not contact creation. Retry an undelivered contact on a later actual movement,
+without a timer or stacked queued tasks. Keep delivered-contact suppression.
 
 **Files:** `scene-minestom/.../internal/collision/NpcCollisionController.kt`,
 its existing native tests and one focused actual movement-listener regression.
@@ -62,14 +64,37 @@ impulse speed = distance * TPS * 0.454, horizontal along current outward contact
 
 ### Task 3: Editor distance authoring
 
-**Files:** existing editor command parser/dispatcher, common mutations and tests.
-**Interfaces:** Consumes released Task1 API. Distance command enables nullable
+**Repository:** `/home/lukas/grounds/.worktrees/plugin-scene-editor-ingame-actions`,
+branch `feat/npc-bounce-distance-20261013`, baseline `84b0bb0fd58d8c1f25d82c242ed4a47b9632d0e7`.
+**Files:** `common/src/main/kotlin/gg/grounds/scene/editor/mutation/SceneMutations.kt`,
+`paper/src/main/kotlin/gg/grounds/scene/editor/paper/command/{SceneCommand,SceneCommandParser,SceneCommandDispatcher,SceneCommandAuthorizer,SceneTabCompleter}.kt`,
+`paper/src/main/resources/plugin.yml`, existing corresponding mutation/session/
+command/completion tests, `README.md` for author-facing approximate-distance note.
+**Interfaces:** Consumes Task1 additive `NpcCollision(mode, bounceStrength, bounceDistance)`
+and `bounceDistance: Double?`. Use primary's current library worktree through
+Gradle `--include-build /home/lukas/grounds/.worktrees/library-scene-attachment-drain`
+for local proof until the library release exists; primary later pins the actual
+published version. Do not publish locally or fake a release version.
+Distance command enables nullable
 distance and resets inert legacy strength to6; explicit strength command clears
 distance. Mode changes retain both fields. No Paper collision runtime.
+
+Add `SceneMutations.setNpcBounceDistance(actor: UUID, target: LocalId, distance: Double)`
+using existing selected-element/lease/history path; finite distance0..20.
+Add strict `SceneCommandParser.bounceDistance(value: String?): Double?` validating
+raw BigDecimal0..20 before conversion so negative-underflow and roundedabove20
+cannot slip in. Do not alter the generic finite parser or legacy speed semantics.
+Expose `/scene npc <id> collision distance <blocks>` plus completion0/0.5/1/1.5/2
+and permission `grounds.scene.npc.collision.distance`; include distance in parent
+collision permission discovery. Mode/legacy strength commands remain available.
 
 - [ ] RED fractional distance command, selection/lease/history, all reconstruction
   preservation and explicit legacy strength reset; implement minimal changes.
 - [ ] Full editor test/Spotless and artifact inspection GREEN; commit/review.
+Use composite build for local full `test spotlessCheck :paper:shadowJar`; no push,
+PR, release, deploy, cluster mutation, new dependencies or unrelated completion
+bootstrap fix. Preserve existing reconstruction behavior and verify distance
+through body/label/transform/action/clone plus undo/redo and save roundtrip.
 
 ### Task 4: Release, readers and isolated acceptance
 

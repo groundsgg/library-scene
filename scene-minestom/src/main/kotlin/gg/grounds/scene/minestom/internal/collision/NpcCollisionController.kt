@@ -1,6 +1,7 @@
 package gg.grounds.scene.minestom.internal.collision
 
 import gg.grounds.scene.format.LocalId
+import gg.grounds.scene.format.NpcCollision
 import gg.grounds.scene.format.NpcCollisionMode
 import gg.grounds.scene.minestom.SceneClock
 import gg.grounds.scene.minestom.ScenePlayerPolicy
@@ -12,6 +13,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
+import net.minestom.server.MinecraftServer
 import net.minestom.server.collision.BoundingBox
 import net.minestom.server.collision.SweepResult
 import net.minestom.server.coordinate.Point
@@ -140,42 +142,54 @@ internal class NpcCollisionController(
         val npc = hit.active.npc ?: return
         if (
             npc.collision.mode != NpcCollisionMode.BOUNCE ||
-                npc.collision.bounceStrength == 0.0 ||
-                previous?.identity == hit.key.identity ||
+                npc.collision.impulseSpeed() == 0.0 ||
+                contact.delivered ||
+                contact.pending ||
                 !minimumIntervalElapsed(player.uuid)
         ) {
             return
         }
         val accepted = AcceptedPosition(old.x(), old.y(), old.z())
         val token = contact.token
-        schedule(
-            Runnable {
-                val currentContact = contacts[player.uuid]
-                if (
-                    closed ||
-                        currentContact?.token != token ||
-                        player.instance !== instance ||
-                        player.gameMode == GameMode.SPECTATOR ||
-                        !accepted.matches(player.position) ||
-                        !eligible(player)
-                ) {
-                    return@Runnable
+        contact.pending = true
+        try {
+            schedule(
+                Runnable {
+                    try {
+                        val currentContact = contacts[player.uuid]
+                        if (
+                            closed ||
+                                currentContact?.token != token ||
+                                player.instance !== instance ||
+                                player.gameMode == GameMode.SPECTATOR ||
+                                !accepted.matches(player.position) ||
+                                !eligible(player)
+                        ) {
+                            return@Runnable
+                        }
+                        val currentHit =
+                            currentHit(hit.key.identity, playerBox, old, delta) ?: return@Runnable
+                        val currentStrength =
+                            currentHit.active.npc?.collision?.impulseSpeed() ?: return@Runnable
+                        if (!minimumIntervalElapsed(player.uuid)) return@Runnable
+                        val velocity = player.velocity
+                        player.velocity =
+                            Vec(
+                                currentHit.outward.x() * currentStrength,
+                                velocity.y(),
+                                currentHit.outward.z() * currentStrength,
+                            )
+                        lastImpulseNanos[player.uuid] = clock.nanoTime()
+                        currentContact.delivered = true
+                    } finally {
+                        contact.pending = false
+                    }
                 }
-                val currentHit =
-                    currentHit(hit.key.identity, playerBox, old, delta) ?: return@Runnable
-                val currentStrength =
-                    currentHit.active.npc?.collision?.bounceStrength ?: return@Runnable
-                if (!minimumIntervalElapsed(player.uuid)) return@Runnable
-                val velocity = player.velocity
-                player.velocity =
-                    Vec(
-                        currentHit.outward.x() * currentStrength,
-                        velocity.y(),
-                        currentHit.outward.z() * currentStrength,
-                    )
-                lastImpulseNanos[player.uuid] = clock.nanoTime()
-            }
-        )
+            )
+        } catch (error: Throwable) {
+            contact.pending = false
+            throw error
+        }
     }
 
     fun disconnect(playerId: UUID) {
@@ -239,7 +253,7 @@ internal class NpcCollisionController(
         if (
             !npc.visible ||
                 npc.collision.mode != NpcCollisionMode.BOUNCE ||
-                npc.collision.bounceStrength == 0.0 ||
+                npc.collision.impulseSpeed() == 0.0 ||
                 interaction.instance !== instance ||
                 interactionElementId(interaction.uuid) != identity.elementId
         ) {
@@ -289,7 +303,12 @@ internal class NpcCollisionController(
         val radius: Double,
     )
 
-    private data class Contact(val identity: ColliderIdentity, val token: Long)
+    private data class Contact(
+        val identity: ColliderIdentity,
+        val token: Long,
+        var pending: Boolean = false,
+        var delivered: Boolean = false,
+    )
 
     private data class Hit(
         val active: ActiveElement,
@@ -307,6 +326,12 @@ internal class NpcCollisionController(
         val LOGGER = LoggerFactory.getLogger(NpcCollisionController::class.java)
     }
 }
+
+/** Approximate free travel on ordinary ground: sum of velocities with drag 0.6 * 0.91. */
+@Suppress("DEPRECATION") // The TPS facade is shared by the July compile ABI and October runtime.
+private fun NpcCollision.impulseSpeed(): Double =
+    bounceDistance?.let { it * MinecraftServer.TICK_PER_SECOND * (1.0 - 0.6 * 0.91) }
+        ?: bounceStrength
 
 private data class SlabEntry(val fraction: Double, val outward: Vec)
 

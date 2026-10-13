@@ -6,11 +6,8 @@ NPC/contact rather than player view. No upward launch or passage through walls.
 The current live bounce is delivered, but holding forward produces jitter and
 rapid apparent sticking: this is not accepted behavior.
 
-The common format/compatibility contract below is settled. Runtime presentation
-is still awaiting the user's choice after real packet-flow diagnosis: direct
-collision-clamped displacement versus a soft impulse with approximate distance.
-The impulse conversion below is a provisional proposal, not implemented or
-approved for deployment. No runtime/reader release until that choice is settled.
+The user explicitly chose a soft impulse with approximate distance after real
+packet-flow diagnosis. Do not replace it with a teleport-to-distance.
 
 ## Authoring and compatibility
 
@@ -19,8 +16,9 @@ Keep `bounceStrength` as the legacy 0..20 blocks/second representation; never
 reinterpret its value as distance. Reject a wire object containing both fields.
 Absent distance preserves old decoding, defaults and canonical bytes. Explicit
 distance overrides the legacy runtime speed, is retained through mode switches,
-and is serialized without a redundant strength. Default for a newly chosen
-distance setting is 1 block; zero remains solid without an impulse.
+and is serialized without a redundant strength. Distance is chosen explicitly;
+omission retains the legacy default speed6, not an implicit distance preset.
+Zero remains solid without an impulse.
 
 Keep old NpcCollision constructor/default-mask, copy/default-mask and component
 descriptors, and the existing Npc descriptors. Add a nullable distance property
@@ -47,6 +45,10 @@ Resolve sticking from demonstrated packet/contact state failure, not by blindly
 raising the impulse or weakening traversal validation. Keep the real movement
 listener/teleport confirmation/packet ordering in the regression boundary, and
 retain one impulse per continuous contact plus the 250ms delivery cooldown.
+Only successful impulse delivery consumes that contact. A new contact reached
+during the cooldown remains eligible after it expires; a queued impulse that
+fails its lifecycle/position checks must not permanently latch the contact.
+Keep at most one task pending for a contact and clear pending state on all exits.
 
 ## Verification and delivery
 
