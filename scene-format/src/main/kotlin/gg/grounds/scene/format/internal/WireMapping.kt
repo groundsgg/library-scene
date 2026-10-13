@@ -104,6 +104,7 @@ internal object WireMapping {
                 NpcCollisionMode.BOUNCE -> "bounce"
             },
             value.bounceStrength,
+            value.bounceDistance,
         )
 
     private fun binding(value: TriggerBinding) =
@@ -314,7 +315,10 @@ internal object WireMapping {
         }
 
     private fun collision(w: NpcCollisionWire, path: String): NpcCollision =
-        mapped("$path/bounceStrength", "INVALID_ACTION_ARGUMENT") {
+        mapped(
+            "$path/${if (w.bounceDistance == null) "bounceStrength" else "bounceDistance"}",
+            "INVALID_ACTION_ARGUMENT",
+        ) {
             NpcCollision(
                 when (w.mode) {
                     "none" -> NpcCollisionMode.NONE
@@ -323,6 +327,7 @@ internal object WireMapping {
                     else -> error("WireReader accepted an invalid collision mode")
                 },
                 w.bounceStrength,
+                w.bounceDistance,
             )
         }
 

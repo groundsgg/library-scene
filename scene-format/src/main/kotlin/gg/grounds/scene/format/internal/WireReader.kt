@@ -195,12 +195,32 @@ internal object WireReader {
         }
 
     private fun collision(node: JsonNode, path: String) =
-        obj(node, emptySet(), path, setOf("mode", "bounceStrength")) { value ->
+        obj(node, emptySet(), path, setOf("mode", "bounceStrength", "bounceDistance")) { value ->
+            if (value.has("bounceStrength") && value.has("bounceDistance")) {
+                fail(
+                    path,
+                    "INVALID_ACTION_ARGUMENT",
+                    "Choose bounce distance or legacy strength, not both.",
+                )
+            }
             NpcCollisionWire(
                 if (value.has("mode")) enum(value, "mode", path, COLLISION_MODE_NAMES) else "none",
                 if (value.has("bounceStrength")) collisionStrength(value, path) else 6.0,
+                if (value.has("bounceDistance")) collisionDistance(value, path) else null,
             )
         }
+
+    private fun collisionDistance(node: JsonNode, path: String): Double {
+        val distance = decimal(node, "bounceDistance", path)
+        if (distance < BigDecimal.ZERO || distance > MAX_COLLISION_STRENGTH) {
+            fail(
+                childPath(path, "bounceDistance"),
+                "INVALID_ACTION_ARGUMENT",
+                "Collision bounce distance must be between 0.0 and 20.0 blocks inclusive.",
+            )
+        }
+        return distance.toDouble()
+    }
 
     private fun collisionStrength(node: JsonNode, path: String): Double {
         val strength = decimal(node, "bounceStrength", path)

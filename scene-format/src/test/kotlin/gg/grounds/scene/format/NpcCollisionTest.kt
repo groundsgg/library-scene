@@ -9,6 +9,78 @@ import kotlin.test.assertTrue
 
 class NpcCollisionTest {
     @Test
+    fun `fractional block distance round trips without a redundant legacy speed`() {
+        listOf("0.5", "1.5", "2.25", "0", "20").forEach { distance ->
+            val scene =
+                decode(sceneWithCollision("""{"mode":"bounce","bounceDistance":$distance}"""))
+            val encoded = encode(scene)
+            assertTrue("\"bounceDistance\"" in encoded)
+            assertFalse("\"bounceStrength\"" in encoded)
+            assertEquals(scene, decode(encoded))
+        }
+    }
+
+    @Test
+    fun `distance rejects invalid raw decimals and ambiguous legacy speed`() {
+        listOf("-1e-400", "20.0000000000000001", "1e400").forEach { distance ->
+            assertDecodeFailure(
+                sceneWithCollision("""{"mode":"bounce","bounceDistance":$distance}"""),
+                SceneProblemCode.INVALID_ACTION_ARGUMENT,
+                "/elements/0/collision/bounceDistance",
+            )
+        }
+        assertDecodeFailure(
+            sceneWithCollision("""{"mode":"bounce","bounceDistance":0.5,"bounceStrength":6}"""),
+            SceneProblemCode.INVALID_ACTION_ARGUMENT,
+            "/elements/0/collision",
+        )
+    }
+
+    @Test
+    fun `legacy collision constructor and copy JVM descriptors remain callable`() {
+        val type = NpcCollision::class.java
+        val mode = NpcCollisionMode::class.java
+        val double = Double::class.javaPrimitiveType!!
+        val mask = Int::class.javaPrimitiveType!!
+        val marker = Class.forName("kotlin.jvm.internal.DefaultConstructorMarker")
+        type.getDeclaredConstructor(mode, double)
+        type.getDeclaredConstructor(mode, double, mask, marker)
+        val old = NpcCollision(NpcCollisionMode.NONE, 12.5)
+        val copied =
+            type.getDeclaredMethod("copy", mode, double).invoke(old, NpcCollisionMode.BOUNCE, 12.5)
+        assertEquals(NpcCollision(NpcCollisionMode.BOUNCE, 12.5), copied)
+        val defaultCopy =
+            type
+                .getDeclaredMethod("copy\$default", type, mode, double, mask, Any::class.java)
+                .invoke(null, old, NpcCollisionMode.BOUNCE, 0.0, 2, null)
+        assertEquals(NpcCollision(NpcCollisionMode.BOUNCE, 12.5), defaultCopy)
+        type.getDeclaredConstructor()
+    }
+
+    @Test
+    fun `distance survives mode copies and explicit legacy construction remains speed based`() {
+        val distance = NpcCollision(NpcCollisionMode.BOUNCE, 6.0, 0.5)
+        assertEquals(0.5, distance.copy(mode = NpcCollisionMode.SOLID).bounceDistance)
+        assertEquals(1.5, distance.copy(bounceDistance = 1.5).bounceDistance)
+        assertEquals(null, distance.copy(bounceStrength = 12.5).bounceDistance)
+        assertEquals(null, NpcCollision(distance.mode, 6.0).bounceDistance)
+        assertEquals(6.0, NpcCollision(distance.mode, 6.0).bounceStrength)
+    }
+
+    @Test
+    fun `programmatic distance rejects non-finite out-of-range and conflicting speed`() {
+        listOf(-0.1, 20.1, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY)
+            .forEach { distance ->
+                assertFailsWith<IllegalArgumentException> {
+                    NpcCollision(NpcCollisionMode.BOUNCE, 6.0, distance)
+                }
+            }
+        assertFailsWith<IllegalArgumentException> {
+            NpcCollision(NpcCollisionMode.BOUNCE, 12.0, 0.5)
+        }
+    }
+
+    @Test
     fun `missing and default collision decode to defaults and encode without collision`() {
         listOf(
                 npcScene(),

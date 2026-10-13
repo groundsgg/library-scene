@@ -93,7 +93,11 @@ internal data class NpcWire(
     override val type = "npc"
 }
 
-internal data class NpcCollisionWire(val mode: String, val bounceStrength: Double)
+internal data class NpcCollisionWire(
+    val mode: String,
+    val bounceStrength: Double,
+    val bounceDistance: Double? = null,
+)
 
 internal sealed interface LookWire {
     val type: String

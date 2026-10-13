@@ -20,15 +20,151 @@ import net.minestom.server.entity.Entity
 import net.minestom.server.entity.EntityType
 import net.minestom.server.entity.GameMode
 import net.minestom.server.entity.Player
+import net.minestom.server.event.EventFilter
+import net.minestom.server.event.EventListener
+import net.minestom.server.event.EventNode
+import net.minestom.server.event.entity.EntityVelocityEvent
 import net.minestom.server.event.player.PlayerMoveEvent
+import net.minestom.server.event.trait.InstanceEvent
 import net.minestom.server.instance.InstanceContainer
+import net.minestom.server.listener.PlayerPositionListener
+import net.minestom.server.network.packet.client.play.ClientPlayerPositionPacket
+import net.minestom.server.network.packet.client.play.ClientTeleportConfirmPacket
 import net.minestom.server.network.packet.server.SendablePacket
+import net.minestom.server.network.packet.server.play.EntityVelocityPacket
 import net.minestom.server.network.player.GameProfile
 import net.minestom.server.network.player.PlayerConnection
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 
 class NpcCollisionControllerTest {
+    @Test
+    fun `velocity uncancelled after observer still consumes the contact`() {
+        val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0))
+        fixture.connection.packets.clear()
+        fixture.instance.eventNode().addListener(EntityVelocityEvent::class.java) { event ->
+            if (event.entity === fixture.player) event.isCancelled = true
+        }
+        val child: EventNode<InstanceEvent> =
+            EventNode.type("uncancel-velocity", EventFilter.INSTANCE)
+        child.addListener(
+            EventListener.builder(EntityVelocityEvent::class.java)
+                .ignoreCancelled(false)
+                .handler { event -> event.isCancelled = false }
+                .build()
+        )
+        fixture.instance.eventNode().addChild(child)
+
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.runScheduled()
+        assertEquals(1, fixture.velocityPackets().size)
+
+        fixture.clock.advanceMillis(250)
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.runScheduled()
+
+        assertEquals(1, fixture.velocityPackets().size)
+    }
+
+    @Test
+    fun `cancelled native velocity can retry the same contact immediately`() {
+        val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0))
+        fixture.player.velocity = Vec(0.0, 0.0, -6.0)
+        fixture.connection.packets.clear()
+        var cancelVelocity = true
+        fixture.instance.eventNode().addListener(EntityVelocityEvent::class.java) { event ->
+            if (event.entity === fixture.player && cancelVelocity) event.isCancelled = true
+        }
+
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.runScheduled()
+
+        assertTrue(fixture.velocityPackets().isEmpty())
+        assertEquals(Vec(0.0, 0.0, -6.0), fixture.player.velocity)
+
+        cancelVelocity = false
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        assertEquals(1, fixture.scheduled.size)
+        fixture.runScheduled()
+
+        assertEquals(1, fixture.velocityPackets().size)
+        fixture.clock.advanceMillis(250)
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.runScheduled()
+        assertEquals(1, fixture.velocityPackets().size)
+    }
+
+    @Test
+    fun `native movement reapproach during cooldown does not latch an undelivered contact forever`() {
+        val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0))
+        fixture.enableNativeMovement()
+        fixture.protocolMove(Pos(0.0, 0.0, 2.0))
+        fixture.runScheduled()
+        assertEquals(1, fixture.velocityPackets().size)
+        assertEquals(-0.3, fixture.velocityPackets().single().velocity().z(), 1e-9)
+
+        // The real listener ignores even outward movement until correction is acknowledged.
+        fixture.protocolMove(Pos(0.0, 0.0, -3.0))
+        assertEquals(-2.0, fixture.player.position.z())
+        fixture.confirmTeleport()
+        fixture.protocolMove(Pos(0.0, 0.0, -3.0))
+        assertEquals(-3.0, fixture.player.position.z())
+
+        fixture.clock.advanceMillis(100)
+        fixture.protocolMove(Pos(0.0, 0.0, 2.0))
+        fixture.runScheduled()
+        assertEquals(1, fixture.velocityPackets().size)
+        fixture.confirmTeleport()
+        fixture.clock.advanceMillis(150)
+        fixture.protocolMove(Pos(0.0, 0.0, 2.0))
+        fixture.runScheduled()
+        assertEquals(2, fixture.velocityPackets().size)
+
+        // Delivered continuous contact still cannot stack another impulse.
+        fixture.confirmTeleport()
+        fixture.clock.advanceMillis(250)
+        fixture.protocolMove(Pos(0.0, 0.0, 2.0))
+        fixture.runScheduled()
+        assertEquals(2, fixture.velocityPackets().size)
+    }
+
+    @Test
+    fun `fractional distance uses one soft horizontal impulse and preserves vertical velocity`() {
+        listOf(0.5 to 4.54, 1.5 to 13.62, 0.0 to 0.0).forEach { (distance, speed) ->
+            val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0, distance))
+            fixture.player.velocity = Vec(0.0, 3.5, 0.0)
+            fixture.connection.packets.clear()
+            val event = fixture.move(Pos(0.0, 0.0, 2.0))
+            fixture.runScheduled()
+            assertEquals(Pos(0.0, 0.0, -2.0), event.newPosition)
+            assertEquals(-speed, fixture.player.velocity.z(), 1e-9)
+            assertEquals(3.5, fixture.player.velocity.y(), 1e-9)
+            if (distance > 0.0) {
+                val packet = fixture.velocityPackets().single()
+                assertEquals(-speed / 20.0, packet.velocity().z(), 1e-9)
+                assertEquals(3.5 / 20.0, packet.velocity().y(), 1e-9)
+            } else assertTrue(fixture.velocityPackets().isEmpty())
+        }
+    }
+
+    @Test
+    fun `failed queued impulse can retry the same contact without stacking tasks`() {
+        val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0))
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        assertEquals(1, fixture.scheduled.size)
+        fixture.translateCollider(10.0)
+        fixture.runScheduled()
+        assertEquals(Vec.ZERO, fixture.player.velocity)
+        fixture.translateCollider(0.0)
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        assertEquals(1, fixture.scheduled.size)
+        fixture.runScheduled()
+        assertEquals(-6.0, fixture.player.velocity.z(), 1e-9)
+    }
+
     @Test
     fun `none accepts movement without consulting player eligibility`() {
         val fixture = Fixture(NpcCollision())
@@ -298,8 +434,9 @@ class NpcCollisionControllerTest {
     ) {
         val instance: InstanceContainer =
             MinecraftServer.getInstanceManager().createInstanceContainer()
+        val connection = FakeConnection()
         val player =
-            Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex")).also {
+            Player(connection, GameProfile(UUID.randomUUID(), "Alex")).also {
                 it.setInstance(instance, Pos(0.0, 0.0, -2.0)).join()
             }
         val policy = CountingPolicy()
@@ -330,6 +467,33 @@ class NpcCollisionControllerTest {
         fun runScheduled() {
             while (scheduled.isNotEmpty()) scheduled.removeFirst().run()
         }
+
+        fun enableNativeMovement() {
+            player.refreshReceivedTeleportId(player.lastSentTeleportId)
+            connection.packets.clear()
+            instance.eventNode().addListener(PlayerMoveEvent::class.java, controller::move)
+        }
+
+        fun protocolMove(destination: Pos) =
+            PlayerPositionListener.playerPositionListener(
+                ClientPlayerPositionPacket(destination, true, false),
+                player,
+            )
+
+        fun confirmTeleport() {
+            // October adds confirmed position to this packet; keep the July compilation ABI.
+            val constructor = ClientTeleportConfirmPacket::class.java.declaredConstructors.single()
+            val packet =
+                if (constructor.parameterCount == 1)
+                    constructor.newInstance(player.lastSentTeleportId)
+                else constructor.newInstance(player.lastSentTeleportId, player.position)
+            PlayerPositionListener.teleportConfirmListener(
+                packet as ClientTeleportConfirmPacket,
+                player,
+            )
+        }
+
+        fun velocityPackets() = connection.packets.filterIsInstance<EntityVelocityPacket>()
 
         fun replaceCollider() {
             val previous = active.getValue(npc.id)
@@ -442,7 +606,11 @@ class NpcCollisionControllerTest {
     }
 
     private class FakeConnection : PlayerConnection() {
-        override fun sendPacket(packet: SendablePacket) = Unit
+        val packets = mutableListOf<SendablePacket>()
+
+        override fun sendPacket(packet: SendablePacket) {
+            packets.add(packet)
+        }
 
         override fun getRemoteAddress(): SocketAddress = InetSocketAddress(0)
     }

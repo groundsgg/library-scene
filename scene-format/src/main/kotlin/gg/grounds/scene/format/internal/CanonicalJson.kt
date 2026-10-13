@@ -181,7 +181,12 @@ internal object CanonicalJson {
                     obj(
                         depth,
                         compact,
-                        listOf("mode" to value.mode, "bounceStrength" to value.bounceStrength),
+                        listOf(
+                            "mode" to value.mode,
+                            if (value.bounceDistance == null)
+                                "bounceStrength" to value.bounceStrength
+                            else "bounceDistance" to value.bounceDistance,
+                        ),
                     )
                 is FixedLookWire -> obj(depth, compact, listOf("type" to value.type))
                 is TrackNearestLookWire ->
