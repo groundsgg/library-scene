@@ -55,6 +55,65 @@ import org.junit.jupiter.api.Test
 
 class SceneRuntimeLifecycleIntegrationTest {
     @Test
+    fun `native airborne side contact does not rewind jump height or send stale downward velocity`() {
+        listOf(Triple(1.05, 0.3, true), Triple(0.55, -0.2, false), Triple(0.75, 0.0, false))
+            .forEach { (requestedY, expectedPacketY, previouslyGrounded) ->
+                val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+                val connection = FakeConnection()
+                val player =
+                    Player(connection, GameProfile(UUID.randomUUID(), "Alex")).also {
+                        it.setInstance(instance, Pos(0.0, 0.75, -2.0)).join()
+                        it.setNoGravity(true)
+                    }
+                val creation =
+                    SceneRuntimeFactory.create(
+                            request(
+                                instance,
+                                ImmediateRenderer(instance),
+                                RecordingActions(),
+                                scene =
+                                    collisionScene(NpcCollision(NpcCollisionMode.BOUNCE, 6.0, 1.5)),
+                            )
+                        )
+                        .toCompletableFuture()
+                tickUntil(instance) { creation.isDone }
+                val runtime = assertIs<SceneRuntimeCreationResult.Success>(creation.get()).runtime
+                player.refreshReceivedTeleportId(player.lastSentTeleportId)
+                player.refreshOnGround(previouslyGrounded)
+                // Client jump positions do not refresh Minestom's server-side Y velocity.
+                player.velocity = Vec(0.0, -25.0, 0.0)
+                connection.packets.clear()
+                connection.setClientState(ConnectionState.PLAY)
+
+                player.addPacketToQueue(
+                    ClientPlayerPositionPacket(Pos(0.0, requestedY, 2.0), false, false)
+                )
+                player.tick(0)
+
+                val correction =
+                    connection.packets.filterIsInstance<PlayerPositionAndLookPacket>().single()
+                val impulse = connection.packets.filterIsInstance<EntityVelocityPacket>().single()
+                assertEquals(Pos(0.0, requestedY, -2.0), correction.position())
+                assertEquals(expectedPacketY, impulse.velocity().y(), 1e-9)
+                assertEquals(-0.681, impulse.velocity().z(), 1e-9)
+                assertEquals(
+                    listOf(correction, impulse),
+                    connection.packets.filter {
+                        it is PlayerPositionAndLookPacket || it is EntityVelocityPacket
+                    },
+                )
+                repeat(3) {
+                    PlayerPositionListener.playerPositionListener(
+                        ClientPlayerPositionPacket(Pos(0.0, requestedY, 2.0), false, false),
+                        player,
+                    )
+                }
+                assertEquals(1, connection.packets.filterIsInstance<EntityVelocityPacket>().size)
+                runtime.close().toCompletableFuture().also { tickUntil(instance, it::isDone) }.get()
+            }
+    }
+
+    @Test
     fun `native collision corrects then delivers one soft impulse in the same player tick`() {
         val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
         val connection = FakeConnection()

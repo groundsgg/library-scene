@@ -15,6 +15,7 @@ import kotlin.math.max
 import kotlin.math.sqrt
 import net.minestom.server.MinecraftServer
 import net.minestom.server.collision.BoundingBox
+import net.minestom.server.collision.CollisionUtils
 import net.minestom.server.collision.SweepResult
 import net.minestom.server.coordinate.Point
 import net.minestom.server.coordinate.Pos
@@ -92,6 +93,7 @@ internal class NpcCollisionController(
         revision++
     }
 
+    @Suppress("DEPRECATION") // TPS facade shared by the July ABI and October runtime.
     fun move(event: PlayerMoveEvent) {
         if (closed || event.isCancelled) return
         val player = event.player
@@ -136,7 +138,20 @@ internal class NpcCollisionController(
             return
         }
 
-        event.newPosition = Pos(old.x(), old.y(), old.z(), requested.yaw(), requested.pitch())
+        val verticalDelta = Vec(0.0, delta.y(), 0.0)
+        val correctedHeight =
+            if (
+                !hit.horizontal ||
+                    delta.y() == 0.0 ||
+                    candidates.any { candidate(it, player, old, verticalDelta) != null }
+            )
+                old.y()
+            else
+                CollisionUtils.handlePhysics(player, verticalDelta).let { physics ->
+                    if (physics.collisionY()) physics.newPosition().y() else requested.y()
+                }
+        val corrected = Pos(old.x(), correctedHeight, old.z(), requested.yaw(), requested.pitch())
+        event.newPosition = corrected
         val previous = contacts[player.uuid]
         val contact =
             if (previous?.identity == hit.key.identity) previous
@@ -151,7 +166,8 @@ internal class NpcCollisionController(
         ) {
             return
         }
-        val accepted = AcceptedPosition(old.x(), old.y(), old.z())
+        val accepted = AcceptedPosition(corrected.x(), corrected.y(), corrected.z())
+        val groundedContact = event.isOnGround && player.isOnGround
         val token = contact.token
         contact.pending = true
         try {
@@ -181,9 +197,17 @@ internal class NpcCollisionController(
                                 player,
                                 Vec(
                                     currentHit.outward.x() * currentStrength,
-                                    if (player.isOnGround && !player.isFlying)
+                                    if (player.isFlying) velocity.y()
+                                    else if (groundedContact && player.isOnGround)
                                         maxOf(velocity.y(), GROUNDED_BOUNCE_LIFT)
-                                    else velocity.y(),
+                                    else if (
+                                        currentHit.horizontal && correctedHeight == requested.y()
+                                    )
+                                        (delta.y() * MinecraftServer.TICK_PER_SECOND).coerceIn(
+                                            -MAX_AIRBORNE_SPEED,
+                                            MAX_AIRBORNE_SPEED,
+                                        )
+                                    else 0.0,
                                     currentHit.outward.z() * currentStrength,
                                 ),
                             )
@@ -245,7 +269,7 @@ internal class NpcCollisionController(
         if (!colliderBox.intersectBoxSwept(old, delta, colliderPosition, playerBox, sweep))
             return null
         val entry = slabEntry(colliderBox, colliderPosition, playerBox, old, delta) ?: return null
-        return Hit(active, key, entry.fraction, entry.outward)
+        return Hit(active, key, entry.fraction, entry.outward, entry.horizontal)
     }
 
     private fun currentHit(
@@ -341,6 +365,7 @@ internal class NpcCollisionController(
         val key: ColliderKey,
         val entry: Double,
         val outward: Vec,
+        val horizontal: Boolean,
     )
 
     private data class AcceptedPosition(val x: Double, val y: Double, val z: Double) {
@@ -350,6 +375,8 @@ internal class NpcCollisionController(
     private companion object {
         // 0.2 blocks/tick: a small hop, well below an ordinary jump.
         const val GROUNDED_BOUNCE_LIFT = 4.0
+        // Bound displacement estimates to the legacy velocity packet's 3.9 blocks/tick.
+        const val MAX_AIRBORNE_SPEED = 78.0
         val BOUNCE_INTERVAL_NANOS = TimeUnit.MILLISECONDS.toNanos(250)
         val LOGGER = LoggerFactory.getLogger(NpcCollisionController::class.java)
     }
@@ -361,7 +388,7 @@ private fun NpcCollision.impulseSpeed(): Double =
     bounceDistance?.let { it * MinecraftServer.TICK_PER_SECOND * (1.0 - 0.6 * 0.91) }
         ?: bounceStrength
 
-private data class SlabEntry(val fraction: Double, val outward: Vec)
+private data class SlabEntry(val fraction: Double, val outward: Vec, val horizontal: Boolean)
 
 private fun slabEntry(
     collider: BoundingBox,
@@ -417,7 +444,7 @@ private fun slabEntry(
                 if (length == 0.0) Vec(-1.0, 0.0, 0.0) else Vec(x / length, 0.0, z / length)
             }
         }
-    return SlabEntry(enter, outward)
+    return SlabEntry(enter, outward, axis != 1)
 }
 
 private fun playerBoxAt(position: Point, boundingBox: BoundingBox): BoundingBox =

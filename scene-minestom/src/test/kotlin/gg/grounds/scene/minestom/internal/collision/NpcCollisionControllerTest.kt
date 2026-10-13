@@ -27,6 +27,7 @@ import net.minestom.server.event.entity.EntityVelocityEvent
 import net.minestom.server.event.player.PlayerMoveEvent
 import net.minestom.server.event.trait.InstanceEvent
 import net.minestom.server.instance.InstanceContainer
+import net.minestom.server.instance.block.Block
 import net.minestom.server.listener.PlayerPositionListener
 import net.minestom.server.network.packet.client.play.ClientPlayerPositionPacket
 import net.minestom.server.network.packet.client.play.ClientTeleportConfirmPacket
@@ -38,6 +39,26 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 
 class NpcCollisionControllerTest {
+    @Test
+    fun `projected jump correction cannot enter or pass through a second overhead npc`() {
+        listOf(NpcCollisionMode.SOLID, NpcCollisionMode.BOUNCE).forEach { mode ->
+            listOf(2.0, 6.0).forEach { requestedY ->
+                val fixture = Fixture(NpcCollision(mode, 6.0))
+                fixture.addOverheadCollider()
+                val event = fixture.move(Pos(0.0, requestedY, 2.0))
+                assertEquals(Pos(0.0, 0.0, -2.0), event.newPosition)
+            }
+        }
+    }
+
+    @Test
+    fun `projected jump correction respects a block ceiling at the corrected horizontal position`() {
+        val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0))
+        fixture.instance.setBlock(0, 3, -2, Block.STONE)
+        val event = fixture.move(Pos(0.0, 2.0, 2.0))
+        assertTrue(event.newPosition.y() in 0.0..1.2)
+    }
+
     @Test
     fun `grounded bounce adds one small lift without stacking during held contact`() {
         val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0, 1.5))
@@ -59,7 +80,7 @@ class NpcCollisionControllerTest {
     }
 
     @Test
-    fun `bounce preserves airborne and flying vertical movement and zero distance has no lift`() {
+    fun `apex contact ignores stale server Y while flying retains it and zero has no lift`() {
         listOf(false to -3.0, false to 8.0, true to 0.0).forEach { (flying, vertical) ->
             val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0, 0.5))
             fixture.player.refreshOnGround(flying)
@@ -68,7 +89,7 @@ class NpcCollisionControllerTest {
             fixture.connection.packets.clear()
             fixture.move(Pos(0.0, 0.0, 2.0))
             fixture.runScheduled()
-            assertEquals(vertical, fixture.player.velocity.y(), 1e-9)
+            assertEquals(if (flying) vertical else 0.0, fixture.player.velocity.y(), 1e-9)
         }
         val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0, 0.0))
         fixture.player.refreshOnGround(true)
@@ -77,6 +98,20 @@ class NpcCollisionControllerTest {
         fixture.runScheduled()
         assertTrue(fixture.velocityPackets().isEmpty())
         assertEquals(Vec.ZERO, fixture.player.velocity)
+    }
+
+    @Test
+    fun `vertical face contacts keep full correction and do not push through npc bounds`() {
+        listOf(3.0 to 1.9, -3.0 to -0.5).forEach { (oldY, requestedY) ->
+            val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0))
+            fixture.player.teleport(Pos(0.0, oldY, 0.0)).join()
+            fixture.player.velocity = Vec(0.0, -25.0, 0.0)
+            fixture.connection.packets.clear()
+            val event = fixture.move(Pos(0.0, requestedY, 0.0))
+            fixture.runScheduled()
+            assertEquals(oldY, event.newPosition.y())
+            assertEquals(0.0, fixture.velocityPackets().single().velocity().y(), 1e-9)
+        }
     }
 
     @Test
@@ -171,9 +206,10 @@ class NpcCollisionControllerTest {
     }
 
     @Test
-    fun `fractional distance uses one soft horizontal impulse and preserves vertical velocity`() {
+    fun `fractional distance uses one soft horizontal impulse and preserves flying Y`() {
         listOf(0.5 to 4.54, 1.5 to 13.62, 0.0 to 0.0).forEach { (distance, speed) ->
             val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0, distance))
+            fixture.player.refreshFlying(true)
             fixture.player.velocity = Vec(0.0, 3.5, 0.0)
             fixture.connection.packets.clear()
             val event = fixture.move(Pos(0.0, 0.0, 2.0))
@@ -285,7 +321,7 @@ class NpcCollisionControllerTest {
         bounce.runScheduled()
 
         assertEquals(Pos(0.0, 3.0, 0.0), event.newPosition)
-        assertEquals(Vec(-6.0, -2.5, 0.0), bounce.player.velocity)
+        assertEquals(Vec(-6.0, 0.0, 0.0), bounce.player.velocity)
     }
 
     @Test
@@ -328,9 +364,10 @@ class NpcCollisionControllerTest {
     }
 
     @Test
-    fun `bounce strengths set exact horizontal speed retain vertical velocity and zero still blocks`() {
+    fun `bounce strengths set exact horizontal speed retain flying Y and zero still blocks`() {
         listOf(0.0, 6.0, 12.0).forEach { strength ->
             val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, strength))
+            fixture.player.refreshFlying(true)
             fixture.player.velocity = Vec(2.0, 3.5, 4.0)
 
             val event = fixture.move(Pos(0.0, 0.0, 2.0))
@@ -503,7 +540,7 @@ class NpcCollisionControllerTest {
         }
 
         fun move(destination: Pos): PlayerMoveEvent =
-            PlayerMoveEvent(player, destination, false).also(controller::move)
+            PlayerMoveEvent(player, destination, player.isOnGround).also(controller::move)
 
         fun runScheduled() {
             while (scheduled.isNotEmpty()) scheduled.removeFirst().run()
@@ -551,6 +588,29 @@ class NpcCollisionControllerTest {
             controller.colliderChanged(active.getValue(npc.id))
         }
 
+        fun addOverheadCollider() {
+            val overhead =
+                npc(npc.collision, npc.visible, LocalId("overhead"), Vec3(0.0, 3.0, -2.0))
+            val entity =
+                Entity(EntityType.INTERACTION).also {
+                    it.boundingBox = BoundingBox(2.0, 2.0, 2.0)
+                    it.setInstance(instance, Pos(0.0, 3.0, -2.0)).join()
+                }
+            val element =
+                ActiveElement(
+                    overhead.id,
+                    1L,
+                    emptyList(),
+                    NpcPlatformEntities(null, entity),
+                    overhead,
+                    initialTransform = SceneRenderTransform(overhead.transform, null),
+                    colliderChanged = controller::colliderChanged,
+                )
+            active[overhead.id] = element
+            ownership[entity.uuid] = overhead.id
+            controller.colliderChanged(element)
+        }
+
         fun rotateCollider(yaw: Double) {
             transformCollider(0.0, yaw)
         }
@@ -596,16 +656,16 @@ class NpcCollisionControllerTest {
                 it.setInstance(instance, Pos(0.0, 0.0, 0.0)).join()
             }
 
-        private fun npc(collision: NpcCollision, visible: Boolean) =
+        private fun npc(
+            collision: NpcCollision,
+            visible: Boolean,
+            id: LocalId = LocalId("guide"),
+            position: Vec3 = Vec3(0.0, 0.0, 0.0),
+        ) =
             Npc(
-                id = LocalId("guide"),
+                id = id,
                 group = null,
-                transform =
-                    Transform(
-                        Vec3(0.0, 0.0, 0.0),
-                        EulerRotation(0.0, 0.0, 0.0),
-                        Vec3(1.0, 1.0, 1.0),
-                    ),
+                transform = Transform(position, EulerRotation(0.0, 0.0, 0.0), Vec3(1.0, 1.0, 1.0)),
                 visible = visible,
                 activation = ActivationPolicy.ALWAYS,
                 body = AssetKey("test:npc"),
