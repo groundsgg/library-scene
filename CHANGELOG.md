@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/groundsgg/library-scene/compare/v0.4.0...v0.4.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **scene-minestom:** deliver NPC bounce within the same player tick ([#13](https://github.com/groundsgg/library-scene/issues/13)) ([6b863d4](https://github.com/groundsgg/library-scene/commit/6b863d4544e6dbd06e6f2155a1249aafe6a7ca22))
+
 ## [0.4.0](https://github.com/groundsgg/library-scene/compare/v0.3.0...v0.4.0) (2026-10-13)
 
 
