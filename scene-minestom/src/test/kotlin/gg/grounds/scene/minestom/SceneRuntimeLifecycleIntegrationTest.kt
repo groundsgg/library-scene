@@ -77,6 +77,7 @@ class SceneRuntimeLifecycleIntegrationTest {
         player.refreshReceivedTeleportId(player.lastSentTeleportId)
         connection.packets.clear()
         connection.setClientState(ConnectionState.PLAY)
+        player.refreshOnGround(true)
 
         player.addPacketToQueue(ClientPlayerPositionPacket(Pos(0.0, 0.0, 2.0), true, false))
         player.tick(0)
@@ -94,10 +95,10 @@ class SceneRuntimeLifecycleIntegrationTest {
         assertEquals(Vec.ZERO, correction.delta())
         val velocity = movementPackets[1] as EntityVelocityPacket
         assertEquals(-0.681, velocity.velocity().z(), 1e-9)
-        assertEquals(0.0, velocity.velocity().y(), 1e-9)
+        assertEquals(0.2, velocity.velocity().y(), 1e-9)
         assertEquals(Pos(0.0, 0.0, -2.0), player.position)
         assertEquals(-13.62, player.velocity.z(), 1e-9)
-        assertEquals(0.0, player.velocity.y(), 1e-9)
+        assertEquals(4.0, player.velocity.y(), 1e-9)
 
         repeat(3) {
             PlayerPositionListener.playerPositionListener(

@@ -264,6 +264,7 @@ internal class ElementActivator(
 
     private fun createNpcEntities(npc: Npc): NpcPlatformEntities {
         val interaction = Entity(EntityType.INTERACTION)
+        interaction.setNoGravity(true)
         var label: Entity? = null
         try {
             val transform = SceneRenderTransform(npc.transform, null)
@@ -284,6 +285,7 @@ internal class ElementActivator(
             label =
                 npc.label?.let { text ->
                     Entity(EntityType.TEXT_DISPLAY).also { entity ->
+                        entity.setNoGravity(true)
                         (entity.entityMeta as TextDisplayMeta).text = text
                     }
                 }

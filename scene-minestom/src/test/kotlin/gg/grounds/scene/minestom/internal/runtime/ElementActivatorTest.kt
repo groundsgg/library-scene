@@ -148,6 +148,14 @@ class ElementActivatorTest {
         val entities = assertNotNull(active.npcEntities)
         val label = assertNotNull(entities.label)
         assertEquals(Component.text("Guide"), (label.entityMeta as TextDisplayMeta).text)
+        val labelPosition = label.position
+        val interactionPosition = entities.interaction.position
+        repeat(20) { tick ->
+            label.tick(tick * 50L)
+            entities.interaction.tick(tick * 50L)
+        }
+        assertEquals(labelPosition, label.position, "NPC label must stay at its scene offset")
+        assertEquals(interactionPosition, entities.interaction.position)
         (entities.interaction.entityMeta as InteractionMeta).also { interaction ->
             assertEquals(4.0f, interaction.width)
             assertEquals(3.0f, interaction.height)
