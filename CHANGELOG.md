@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.3](https://github.com/groundsgg/library-scene/compare/v0.4.2...v0.4.3) (2026-10-13)
+
+
+### Bug Fixes
+
+* **scene-minestom:** keep airborne NPC contacts from slamming players down ([#18](https://github.com/groundsgg/library-scene/issues/18)) ([90f9aaa](https://github.com/groundsgg/library-scene/commit/90f9aaae6c91a3c68ae62f940d9da32f4046f857))
+
 ## [0.4.2](https://github.com/groundsgg/library-scene/compare/v0.4.1...v0.4.2) (2026-10-13)
 
 
