@@ -22,6 +22,8 @@ import net.minestom.server.coordinate.Vec
 import net.minestom.server.entity.Entity
 import net.minestom.server.entity.GameMode
 import net.minestom.server.entity.Player
+import net.minestom.server.event.EventListener
+import net.minestom.server.event.entity.EntityVelocityEvent
 import net.minestom.server.event.player.PlayerMoveEvent
 import net.minestom.server.instance.EntityTracker
 import net.minestom.server.instance.Instance
@@ -173,12 +175,16 @@ internal class NpcCollisionController(
                             currentHit.active.npc?.collision?.impulseSpeed() ?: return@Runnable
                         if (!minimumIntervalElapsed(player.uuid)) return@Runnable
                         val velocity = player.velocity
-                        player.velocity =
-                            Vec(
-                                currentHit.outward.x() * currentStrength,
-                                velocity.y(),
-                                currentHit.outward.z() * currentStrength,
+                        val delivered =
+                            applyVelocity(
+                                player,
+                                Vec(
+                                    currentHit.outward.x() * currentStrength,
+                                    velocity.y(),
+                                    currentHit.outward.z() * currentStrength,
+                                ),
                             )
+                        if (!delivered) return@Runnable
                         lastImpulseNanos[player.uuid] = clock.nanoTime()
                         currentContact.delivered = true
                     } finally {
@@ -269,6 +275,22 @@ internal class NpcCollisionController(
             LOGGER.error("NPC collision player policy failed for player={}", player.uuid, error)
             false
         }
+
+    private fun applyVelocity(player: Player, velocity: Vec): Boolean {
+        var observed: EntityVelocityEvent? = null
+        val observer =
+            EventListener.of(EntityVelocityEvent::class.java) { event ->
+                if (event.entity === player) observed = event
+            }
+        val eventNode = instance.eventNode()
+        eventNode.addListener(observer)
+        try {
+            player.velocity = velocity
+        } finally {
+            eventNode.removeListener(observer)
+        }
+        return observed?.isCancelled == false
+    }
 
     private fun minimumIntervalElapsed(playerId: UUID): Boolean {
         val last = lastImpulseNanos[playerId] ?: return true

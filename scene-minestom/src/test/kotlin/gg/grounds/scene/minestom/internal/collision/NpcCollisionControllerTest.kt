@@ -20,6 +20,7 @@ import net.minestom.server.entity.Entity
 import net.minestom.server.entity.EntityType
 import net.minestom.server.entity.GameMode
 import net.minestom.server.entity.Player
+import net.minestom.server.event.entity.EntityVelocityEvent
 import net.minestom.server.event.player.PlayerMoveEvent
 import net.minestom.server.instance.InstanceContainer
 import net.minestom.server.listener.PlayerPositionListener
@@ -33,6 +34,35 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 
 class NpcCollisionControllerTest {
+    @Test
+    fun `cancelled native velocity can retry the same contact immediately`() {
+        val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0))
+        fixture.player.velocity = Vec(0.0, 0.0, -6.0)
+        fixture.connection.packets.clear()
+        var cancelVelocity = true
+        fixture.instance.eventNode().addListener(EntityVelocityEvent::class.java) { event ->
+            if (event.entity === fixture.player && cancelVelocity) event.isCancelled = true
+        }
+
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.runScheduled()
+
+        assertTrue(fixture.velocityPackets().isEmpty())
+        assertEquals(Vec(0.0, 0.0, -6.0), fixture.player.velocity)
+
+        cancelVelocity = false
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        assertEquals(1, fixture.scheduled.size)
+        fixture.runScheduled()
+
+        assertEquals(1, fixture.velocityPackets().size)
+        fixture.clock.advanceMillis(250)
+        fixture.move(Pos(0.0, 0.0, 2.0))
+        fixture.runScheduled()
+        assertEquals(1, fixture.velocityPackets().size)
+    }
+
     @Test
     fun `native movement reapproach during cooldown does not latch an undelivered contact forever`() {
         val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0))
