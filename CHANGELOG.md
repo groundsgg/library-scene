@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/groundsgg/library-scene/compare/v0.4.1...v0.4.2) (2026-10-13)
+
+
+### Bug Fixes
+
+* **scene-minestom:** add gentle NPC bounce lift and anchor labels ([#16](https://github.com/groundsgg/library-scene/issues/16)) ([649cc17](https://github.com/groundsgg/library-scene/commit/649cc170f2d8f66a37c8cafa7c54e0887532824a))
+
 ## [0.4.1](https://github.com/groundsgg/library-scene/compare/v0.4.0...v0.4.1) (2026-10-13)
 
 
