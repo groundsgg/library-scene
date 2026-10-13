@@ -452,7 +452,7 @@ class NpcCollisionControllerTest {
                 instance,
                 policy,
                 clock,
-                scheduled::addLast,
+                { _, task -> scheduled.addLast(task) },
                 ownership::get,
                 active::get,
             )
