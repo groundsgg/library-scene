@@ -15,6 +15,7 @@ import kotlin.math.max
 import kotlin.math.sqrt
 import net.minestom.server.MinecraftServer
 import net.minestom.server.collision.BoundingBox
+import net.minestom.server.collision.CollisionUtils
 import net.minestom.server.collision.SweepResult
 import net.minestom.server.coordinate.Point
 import net.minestom.server.coordinate.Pos
@@ -137,17 +138,18 @@ internal class NpcCollisionController(
             return
         }
 
-        val interaction = checkNotNull(hit.active.npcEntities).interaction
+        val verticalDelta = Vec(0.0, delta.y(), 0.0)
         val correctedHeight =
             if (
-                hit.horizontal &&
-                    !interaction.boundingBox.intersectBox(
-                        interaction.position,
-                        playerBoxAt(old.withY(requested.y()), playerBox),
-                    )
+                !hit.horizontal ||
+                    delta.y() == 0.0 ||
+                    candidates.any { candidate(it, player, old, verticalDelta) != null }
             )
-                requested.y()
-            else old.y()
+                old.y()
+            else
+                CollisionUtils.handlePhysics(player, verticalDelta).let { physics ->
+                    if (physics.collisionY()) physics.newPosition().y() else requested.y()
+                }
         val corrected = Pos(old.x(), correctedHeight, old.z(), requested.yaw(), requested.pitch())
         event.newPosition = corrected
         val previous = contacts[player.uuid]
