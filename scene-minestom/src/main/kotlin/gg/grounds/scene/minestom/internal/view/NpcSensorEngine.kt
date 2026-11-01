@@ -144,9 +144,9 @@ internal class NpcSensorEngine(
         visited: MutableSet<LocalId>,
     ): List<Pair<ActiveElement, gg.grounds.scene.format.Npc>> {
         val candidates = linkedMapOf<LocalId, ActiveElement>()
-        queries.hoverInteractions(player.eyePosition().asPoint()).forEach { entity ->
-            interactions[entity.uuid]?.let { candidates[it.elementId] = it }
-        }
+        queries
+            .hoverInteractions(player.eyePosition().asPoint()) { interactions[it.uuid] }
+            .forEach { candidates[it.elementId] = it }
         oversizedHover.forEach { (id, element) -> candidates[id] = element }
         return candidates.values
             .sortedBy { it.elementId.value }

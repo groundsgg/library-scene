@@ -170,6 +170,31 @@ class ViewerStateTest {
     }
 
     @Test
+    fun `hover query collects only current nearby owners among decorative entities`() {
+        val instance = instance()
+        val nearA = sensorActive(instance, npc("near-a", z = 2.0))
+        val nearB = sensorActive(instance, npc("near-b", z = 3.0))
+        val far = sensorActive(instance, npc("far", z = 10000.0))
+        val owners =
+            listOf(nearA, nearB, far)
+                .associateBy { it.npcEntities!!.interaction!!.uuid }
+                .toMutableMap()
+        repeat(300) {
+            Entity(EntityType.ITEM_DISPLAY).setInstance(instance, Pos(0.0, 0.0, 2.0)).join()
+        }
+        Entity(EntityType.INTERACTION).setInstance(instance, Pos(0.0, 0.0, 2.0)).join()
+        val queries = MinestomSensorQueries(instance)
+        fun candidates() =
+            queries
+                .hoverInteractions(Pos.ZERO) { owners[it.uuid] }
+                .map { it.elementId.value }
+                .toSet()
+        assertEquals(setOf("near-a", "near-b"), candidates())
+        owners.remove(nearA.npcEntities!!.interaction!!.uuid)
+        assertEquals(setOf("near-b"), candidates())
+    }
+
+    @Test
     fun `sensor candidate work excludes distant Interaction chunks`() {
         val instance = instance()
         val sensor = NpcSensorEngine(instance, AlwaysEligible)

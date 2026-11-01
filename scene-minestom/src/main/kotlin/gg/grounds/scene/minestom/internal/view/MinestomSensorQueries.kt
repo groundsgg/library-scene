@@ -14,17 +14,15 @@ internal class MinestomSensorQueries(
 ) {
     private val hoverChunkRange = ceil((interactionReach + normalHoverExtent) / 16.0).toInt()
 
-    fun hoverInteractions(eye: Point): List<Entity> =
-        buildList {
-                instance.getEntityTracker().nearbyEntitiesByChunkRange(
-                    eye,
-                    hoverChunkRange,
-                    EntityTracker.Target.ENTITIES,
-                ) { entity ->
-                    add(entity)
-                }
-            }
-            .sortedBy(Entity::getUuid)
+    fun <T : Any> hoverInteractions(eye: Point, resolve: (Entity) -> T?): List<T> = buildList {
+        instance.getEntityTracker().nearbyEntitiesByChunkRange(
+            eye,
+            hoverChunkRange,
+            EntityTracker.Target.ENTITIES,
+        ) { entity ->
+            resolve(entity)?.let(::add)
+        }
+    }
 
     fun proximityChunkRange(radius: Double): Int? {
         val range = ceil(radius / 16.0)
