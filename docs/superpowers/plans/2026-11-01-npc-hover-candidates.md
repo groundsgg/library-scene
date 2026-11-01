@@ -30,7 +30,7 @@ Interface: `<T : Any> hoverInteractions(eye: Point, resolve: (Entity) -> T?): Li
 - [x] Run focused test RED for missing resolver behavior.
 - [x] Implement resolver collection and use current owner map in NpcSensorEngine; retain its final LocalId sort/oversized path.
 - [x] Run entire Scene suite/format and independent correctness review.
-- [ ] Build isolated Host overlay on prelit22cab857; run matched20-client mixed comparison; retain only evidence-backed improvement.
+- [x] Build isolated Host overlay on prelit22cab857; run matched20-client mixed comparison; retain only evidence-backed improvement.
 - [ ] Commit, record evidence/backlog status and deploy only after the cold-start user test is stable.
 
 ## Ledger
@@ -38,3 +38,5 @@ Interface: `<T : Any> hoverInteractions(eye: Point, resolve: (Entity) -> T?): Li
 BASE e70b000. Ruling: User authorized profile-backed backlog work; execute inline after prioritizing persisted lighting. N32 inverse caching remains a separate decision after this measurement, rather than stacking unmeasured changes.
 
 Validation:268Scene tests pass,0failures/skips;170licensed Host tests pass; both formatting checks pass. Fresh independent correctness review: no blockers. Frozen prelit baseline22cab857 versus candidatec481fd7, same Map9/prelit source,20actual clients and7/7/6mixed zones. Full settled measurement+separate2msJFR pair running; no Stage activation before those results.
+
+Acceptance complete: matched20clients/7-7-6layout,55ssettled window, separate60s/2msJFR. Mean1.802→1.107ms(-38.6%), CPU0.09755→0.07975cores(-18.2%), allocation30.255→28.090MB/s(-7.2%);0disconnects,0DataLoss. One controlled pair; packet-rate variation is not a policy change. SourcePR24 merged as19342662aa9af2ac4482097052c7e1e83243fab6. Raw evidence artifacts/npc-load-profile-2026-11-01/hover-summary.json. Stage activation waits for the separate bounds follow-up.

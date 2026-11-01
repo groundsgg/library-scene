@@ -542,6 +542,82 @@ class ViewerStateTest {
         assertNull(raycaster.rayDistance(active, eye, direction, 5.0))
     }
 
+    @Test
+    fun `prepared hover bounds are reused until root or local geometry changes`() {
+        val authored =
+            npc("cached", z = 2.0, bounds = LocalBounds(Vec3(0.0, 0.0, 0.0), Vec3(1.0, 1.0, 1.0)))
+        val active = ActiveElement(authored.id, 1L, emptyList(), null, authored)
+        val raycaster = BoundsRaycaster()
+        val eye = Vec3(0.0, 0.0, 0.0)
+        val direction = Vec3(0.0, 0.0, 1.0)
+        val first = active.preparedInteractionBounds()
+        kotlin.test.assertSame(first, active.preparedInteractionBounds())
+        assertEquals(1.5, raycaster.rayDistance(active, eye, direction, 10.0))
+        active.updateRuntimeTransform(SceneRenderTransform(authored.transform.copy(), null))
+        kotlin.test.assertSame(
+            first,
+            active.preparedInteractionBounds(),
+            "Equal immutable transforms can share preparation",
+        )
+
+        val moved = authored.transform.copy(position = Vec3(0.0, 0.0, 4.0))
+        active.updateRuntimeTransform(SceneRenderTransform(moved, null))
+        kotlin.test.assertNotSame(first, active.preparedInteractionBounds())
+        assertEquals(3.5, raycaster.rayDistance(active, eye, direction, 10.0))
+        val scaled = moved.copy(scale = Vec3(1.0, 1.0, 2.0))
+        active.updateRuntimeTransform(SceneRenderTransform(scaled, null))
+        assertEquals(3.0, raycaster.rayDistance(active, eye, direction, 10.0))
+        val local =
+            Transform(Vec3(0.0, 0.0, 1.0), EulerRotation(0.0, 0.0, 0.0), Vec3(1.0, 1.0, 1.0))
+        active.updateRuntimeTransform(SceneRenderTransform(scaled, local))
+        assertEquals(5.0, raycaster.rayDistance(active, eye, direction, 10.0))
+        active.updateRuntimeTransform(
+            SceneRenderTransform(scaled, local.copy(position = Vec3(0.0, 0.0, 2.0)))
+        )
+        assertEquals(7.0, raycaster.rayDistance(active, eye, direction, 10.0))
+    }
+
+    @Test
+    fun `warm hover preparation invalidates on root and local rotation alone`() {
+        val authored =
+            npc("rotated", z = 4.0, bounds = LocalBounds(Vec3(0.0, 0.0, 0.0), Vec3(4.0, 1.0, 1.0)))
+        val active = ActiveElement(authored.id, 1L, emptyList(), null, authored)
+        val raycaster = BoundsRaycaster()
+        val eye = Vec3(0.0, 0.0, 0.0)
+        val direction = Vec3(0.0, 0.0, 1.0)
+        val first = active.preparedInteractionBounds()
+        assertEquals(3.5, assertNotNull(raycaster.rayDistance(active, eye, direction, 10.0)), 1e-8)
+        val rotated = authored.transform.copy(rotation = EulerRotation(90.0, 0.0, 0.0))
+        active.updateRuntimeTransform(SceneRenderTransform(rotated, null))
+        val second = active.preparedInteractionBounds()
+        kotlin.test.assertNotSame(first, second)
+        assertEquals(2.0, assertNotNull(raycaster.rayDistance(active, eye, direction, 10.0)), 1e-8)
+        val local =
+            Transform(Vec3(0.0, 0.0, 0.0), EulerRotation(90.0, 0.0, 0.0), Vec3(1.0, 1.0, 1.0))
+        active.updateRuntimeTransform(SceneRenderTransform(rotated, local))
+        kotlin.test.assertNotSame(second, active.preparedInteractionBounds())
+        assertEquals(3.5, assertNotNull(raycaster.rayDistance(active, eye, direction, 10.0)), 1e-8)
+    }
+
+    @Test
+    fun `prepared hover bounds preserve authored fallback and fresh element bounds`() {
+        val authored =
+            npc("fallback", z = 2.0, bounds = LocalBounds(Vec3(0.0, 0.0, 0.0), Vec3(1.0, 1.0, 1.0)))
+        val fallback =
+            ActiveElement(authored.id, 1L, emptyList(), null, authored, initialTransform = null)
+        val eye = Vec3(0.0, 0.0, 0.0)
+        val direction = Vec3(0.0, 0.0, 1.0)
+        assertEquals(1.5, BoundsRaycaster().rayDistance(fallback, eye, direction, 5.0))
+        val changed =
+            npc("fallback", z = 2.0, bounds = LocalBounds(Vec3(0.0, 0.0, 0.0), Vec3(1.0, 1.0, 4.0)))
+        val replaced = ActiveElement(changed.id, 2L, emptyList(), null, changed)
+        kotlin.test.assertNotSame(
+            fallback.preparedInteractionBounds(),
+            replaced.preparedInteractionBounds(),
+        )
+        assertEquals(0.0, BoundsRaycaster().rayDistance(replaced, eye, direction, 5.0))
+    }
+
     private fun sensor(instance: net.minestom.server.instance.Instance) =
         NpcSensorEngine(instance, AlwaysEligible)
 

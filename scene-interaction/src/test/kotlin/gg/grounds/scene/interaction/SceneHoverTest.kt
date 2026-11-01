@@ -30,6 +30,28 @@ class SceneHoverTest {
     }
 
     @Test
+    fun `prepared bounds preserve world distance through nonuniform scale and local shear`() {
+        val prepared =
+            SceneBoundsRaycaster.prepare(
+                bounds,
+                transform(scale = Vec3(2.0, 1.0, 1.0)),
+                transform(yaw = 45.0),
+            )
+        val eye = Vec3(0.0, 0.0, -5.0)
+        assertEquals(
+            5.0 - kotlin.math.sqrt(2.0),
+            assertNotNull(prepared.distance(eye, Vec3(0.0, 0.0, 2.0), 5.0)),
+            1e-8,
+        )
+        assertNull(prepared.distance(eye, Vec3(0.0, 0.0, 1.0), 3.5))
+        assertEquals(0.0, prepared.distance(zero, Vec3(0.0, 0.0, 1.0), 5.0))
+        assertFailsWith<IllegalArgumentException> { prepared.distance(eye, zero, 5.0) }
+        assertFailsWith<IllegalArgumentException> {
+            prepared.distance(eye, Vec3(0.0, 0.0, 1.0), Double.POSITIVE_INFINITY)
+        }
+    }
+
+    @Test
     fun `nearest tie and transitions stay independent per viewer and clean up`() {
         val selector = SceneHoverSelector()
         val a = UUID.randomUUID()
