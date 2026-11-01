@@ -3,6 +3,8 @@ package gg.grounds.scene.minestom.internal.view
 import gg.grounds.scene.format.LocalId
 import gg.grounds.scene.format.SceneTrigger
 import gg.grounds.scene.format.Vec3
+import gg.grounds.scene.interaction.SceneHoverHit
+import gg.grounds.scene.interaction.SceneHoverSelector
 import gg.grounds.scene.minestom.ScenePlayerPolicy
 import gg.grounds.scene.minestom.internal.runtime.ActiveElement
 import java.util.UUID
@@ -24,7 +26,7 @@ internal class NpcSensorEngine(
     private val raycaster: BoundsRaycaster = BoundsRaycaster(),
     private val queries: MinestomSensorQueries = MinestomSensorQueries(instance, interactionReach),
 ) {
-    private val hovered = mutableMapOf<UUID, LocalId>()
+    private val hovered = SceneHoverSelector()
     private val proximityMembers = mutableMapOf<LocalId, MutableSet<UUID>>()
     private val proximityElements = mutableMapOf<UUID, MutableSet<LocalId>>()
     private val active = mutableMapOf<LocalId, ActiveElement>()
@@ -45,7 +47,7 @@ internal class NpcSensorEngine(
         val removed = active.remove(elementId) ?: return
         removed.npcEntities?.interaction?.uuid?.let(interactions::remove)
         oversizedHover.remove(elementId)
-        hovered.entries.removeIf { it.value == elementId }
+        hovered.forgetElement(elementId)
     }
 
     fun refresh(element: ActiveElement) {
@@ -77,29 +79,17 @@ internal class NpcSensorEngine(
                 val npcs = hoverCandidates(player, visited)
                 val eye = player.eyePosition()
                 val direction = player.position.direction().let { Vec3(it.x(), it.y(), it.z()) }
-                val newHover =
-                    npcs
-                        .mapNotNull { (active, npc) ->
-                            if (!npc.visible) return@mapNotNull null
-                            raycaster.rayDistance(active, eye, direction, interactionReach)?.let {
-                                active.elementId to it
-                            }
+                val hits =
+                    npcs.mapNotNull { (active, npc) ->
+                        if (!npc.visible) return@mapNotNull null
+                        raycaster.rayDistance(active, eye, direction, interactionReach)?.let {
+                            SceneHoverHit(active.elementId, it)
                         }
-                        .minWithOrNull(
-                            compareBy<Pair<LocalId, Double>>({ it.second }, { it.first.value })
-                        )
-                        ?.first
-                val previousHover = hovered[player.uuid]
-                if (previousHover != newHover) {
-                    previousHover?.let {
-                        transitions += SensorTransition(player.uuid, it, SceneTrigger.HOVER_LEAVE)
                     }
-                    newHover?.let {
-                        transitions += SensorTransition(player.uuid, it, SceneTrigger.HOVER_ENTER)
+                transitions +=
+                    hovered.update(player.uuid, hits).map {
+                        SensorTransition(it.playerId, it.elementId, it.trigger)
                     }
-                    if (newHover == null) hovered.remove(player.uuid)
-                    else hovered[player.uuid] = newHover
-                }
             }
         lastProximityMembershipWork = 0
         transitions += reconcileProximity(players)
@@ -115,9 +105,10 @@ internal class NpcSensorEngine(
 
     fun removePlayer(playerId: UUID): List<SensorTransition> {
         val transitions = mutableListOf<SensorTransition>()
-        hovered.remove(playerId)?.let {
-            transitions += SensorTransition(playerId, it, SceneTrigger.HOVER_LEAVE)
-        }
+        transitions +=
+            hovered.removeViewer(playerId).map {
+                SensorTransition(it.playerId, it.elementId, it.trigger)
+            }
         proximityElements
             .remove(playerId)
             .orEmpty()
