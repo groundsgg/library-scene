@@ -591,7 +591,8 @@ class SceneRuntimeLifecycleIntegrationTest {
         assertEquals(21, interaction.position.chunkX())
 
         instance.tick(0)
-        val gate = ChunkGate(-1, 21, 0, 20).also { it.install(instance) }
+        // Scene +yaw towards the east rotates these +X offsets towards -Z.
+        val gate = ChunkGate(0, -21, 0, -20).also { it.install(instance) }
         clock.advanceSeconds(1)
         instance.tick(0)
         assertTrue(

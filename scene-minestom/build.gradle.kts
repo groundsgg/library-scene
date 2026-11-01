@@ -1,4 +1,8 @@
 dependencies {
+    implementation(project(":scene-interaction")) {
+        exclude(group = "tools.jackson.core")
+        exclude(group = "tools.jackson.module")
+    }
     api(project(":scene-format")) {
         exclude(group = "tools.jackson.core")
         exclude(group = "tools.jackson.module")

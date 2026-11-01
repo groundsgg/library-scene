@@ -434,7 +434,7 @@ class ViewerStateTest {
         clock.advanceSeconds(1)
         look.update(listOf(higherUuid, lowerUuid), listOf(active))
 
-        assertEquals(EulerRotation(-45.0, 17.0, 0.0), handle.rotations.last())
+        assertEquals(EulerRotation(45.0, 17.0, 0.0), handle.rotations.last())
     }
 
     @Test
@@ -454,7 +454,7 @@ class ViewerStateTest {
         look.update(listOf(player), listOf(lookActive(npc, firstHandle)))
         clock.advanceSeconds(1)
         look.update(listOf(player), listOf(lookActive(npc, firstHandle)))
-        assertEquals(EulerRotation(-20.0, 5.0, 0.0), firstHandle.rotations.last())
+        assertEquals(EulerRotation(40.0, 5.0, 0.0), firstHandle.rotations.last())
 
         clock.advanceSeconds(1)
         look.update(listOf(player), emptyList())
@@ -488,6 +488,8 @@ class ViewerStateTest {
         val interaction = Entity(EntityType.INTERACTION)
         label.setInstance(instance, Pos.ZERO).join()
         interaction.setInstance(instance, Pos.ZERO).join()
+        // Correct east-facing Scene yaw moves both offsets into the northern chunk.
+        instance.loadChunk(0, -1).join()
         val handle = RecordingHandle()
         val active =
             ActiveElement(npc.id, 1L, listOf(handle), NpcPlatformEntities(label, interaction), npc)
@@ -497,14 +499,14 @@ class ViewerStateTest {
         clock.advanceSeconds(1)
         look.update(listOf(player), listOf(active))
 
-        assertEquals(EulerRotation(-90.0, 0.0, 0.0), active.currentTransform.root.rotation)
+        assertEquals(EulerRotation(90.0, 0.0, 0.0), active.currentTransform.root.rotation)
         assertEquals(active.currentTransform, handle.transforms.last())
         assertEquals(0.0, label.position.x(), 0.000_001)
         assertEquals(3.0, label.position.y(), 0.000_001)
-        assertEquals(2.0, label.position.z(), 0.000_001)
+        assertEquals(-2.0, label.position.z(), 0.000_001)
         assertEquals(0.0, interaction.position.x(), 0.000_001)
         assertEquals(0.0, interaction.position.y(), 0.000_001)
-        assertEquals(1.0, interaction.position.z(), 0.000_001)
+        assertEquals(-1.0, interaction.position.z(), 0.000_001)
         assertEquals(4.0f, (interaction.entityMeta as InteractionMeta).width)
         assertEquals(2.0f, (interaction.entityMeta as InteractionMeta).height)
 
