@@ -73,3 +73,12 @@ interface RenderedAssetHandle : AutoCloseable {
 
     override fun close()
 }
+
+/** Optional skeletal look capability; angles use Scene coordinates (+yaw east, -pitch up). */
+interface HeadLookRenderedAssetHandle : RenderedAssetHandle {
+    /** Local Scene-space eye/aim point; null when this asset has no head bone. */
+    val headLookOrigin: Vec3?
+
+    /** Head rotation relative to the body's current orientation, additive to animation. */
+    fun applyHeadLook(yawDegrees: Double, pitchDegrees: Double)
+}

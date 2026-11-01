@@ -1,3 +1,4 @@
+CLASS gg.grounds.scene.minestom.HeadLookRenderedAssetHandle:- interfaces=gg.grounds.scene.minestom.RenderedAssetHandle
 CLASS gg.grounds.scene.minestom.JavaRenderedAssetHandle:java.lang.Object interfaces=gg.grounds.scene.minestom.RenderedAssetHandle
 CLASS gg.grounds.scene.minestom.JavaSceneActionRegistry:java.lang.Object interfaces=gg.grounds.scene.minestom.SceneActionRegistry
 CLASS gg.grounds.scene.minestom.JavaSceneAssetRendererRegistry:java.lang.Object interfaces=gg.grounds.scene.minestom.SceneAssetRendererRegistry
@@ -65,6 +66,8 @@ FIELD gg.grounds.scene.minestom.SceneRuntimeProblemCode.MISSING_ACTION_HANDLER:g
 FIELD gg.grounds.scene.minestom.SceneRuntimeProblemCode.MISSING_EFFECT:gg.grounds.scene.minestom.SceneRuntimeProblemCode
 FIELD gg.grounds.scene.minestom.SceneRuntimeProblemCode.MISSING_RENDERER:gg.grounds.scene.minestom.SceneRuntimeProblemCode
 FIELD gg.grounds.scene.minestom.SceneRuntimeProblemCode.RUNTIME_FAILURE:gg.grounds.scene.minestom.SceneRuntimeProblemCode
+METHOD gg.grounds.scene.minestom.HeadLookRenderedAssetHandle.applyHeadLook(double,double):void throws=
+METHOD gg.grounds.scene.minestom.HeadLookRenderedAssetHandle.getHeadLookOrigin():gg.grounds.scene.format.Vec3 throws=
 METHOD gg.grounds.scene.minestom.JavaRenderedAssetHandle.startAnimation(java.lang.String,long):void throws=
 METHOD gg.grounds.scene.minestom.JavaRenderedAssetHandle.startAnimation-t1GmUmk(java.lang.String,long):void throws=
 METHOD gg.grounds.scene.minestom.JavaRenderedAssetHandle.stopAnimation(java.lang.String):void throws=
