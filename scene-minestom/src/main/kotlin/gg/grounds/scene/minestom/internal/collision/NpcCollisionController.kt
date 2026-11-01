@@ -137,6 +137,17 @@ internal class NpcCollisionController(
             contacts.remove(player.uuid)
             return
         }
+        // The client resolves movement one axis at a time. A legal corner slide can have
+        // a packet's straight start-to-end chord pass through the box. Clipping can change
+        // the relative axis lengths, so the packet cannot tell us which order it used.
+        if (
+            hit.active.npc?.collision?.mode == NpcCollisionMode.SOLID &&
+                (clearAxisPath(candidates, player, old, delta, true) ||
+                    clearAxisPath(candidates, player, old, delta, false))
+        ) {
+            contacts.remove(player.uuid)
+            return
+        }
 
         val verticalDelta = Vec(0.0, delta.y(), 0.0)
         val correctedHeight =
@@ -238,6 +249,38 @@ internal class NpcCollisionController(
         lastImpulseNanos.clear()
         maximumExtent = 0.0
         revision++
+    }
+
+    private fun clearAxisPath(
+        candidates: List<Entity>,
+        player: Player,
+        old: Pos,
+        delta: Vec,
+        xFirst: Boolean,
+    ): Boolean {
+        val vertical = Vec(0.0, delta.y(), 0.0)
+        val x = Vec(delta.x(), 0.0, 0.0)
+        val z = Vec(0.0, 0.0, delta.z())
+        var position = old
+        // One order must clear every blocker; choosing a different order per NPC is unsafe.
+        for (segment in if (xFirst) listOf(vertical, x, z) else listOf(vertical, z, x)) {
+            if (segment == Vec.ZERO) continue
+            if (candidates.any { candidate(it, player, position, segment) != null }) return false
+            val chunk = instance.getChunkAt(position) ?: return false
+            val physics =
+                CollisionUtils.handlePhysics(
+                    instance,
+                    chunk,
+                    player.boundingBox,
+                    position,
+                    segment,
+                    null,
+                    false,
+                )
+            if (physics.collisionX() || physics.collisionY() || physics.collisionZ()) return false
+            position = position.add(segment)
+        }
+        return true
     }
 
     private fun candidate(candidate: Entity, player: Player, old: Pos, delta: Vec): Hit? {

@@ -53,10 +53,12 @@ class NpcCollisionControllerTest {
 
     @Test
     fun `projected jump correction respects a block ceiling at the corrected horizontal position`() {
-        val fixture = Fixture(NpcCollision(NpcCollisionMode.BOUNCE, 6.0))
-        fixture.instance.setBlock(0, 3, -2, Block.STONE)
-        val event = fixture.move(Pos(0.0, 2.0, 2.0))
-        assertTrue(event.newPosition.y() in 0.0..1.2)
+        for (mode in listOf(NpcCollisionMode.SOLID, NpcCollisionMode.BOUNCE)) {
+            val fixture = Fixture(NpcCollision(mode, 6.0))
+            fixture.instance.setBlock(0, 3, -2, Block.STONE)
+            val event = fixture.move(Pos(0.0, 2.0, 2.0))
+            assertTrue(event.newPosition.y() in 0.0..1.2, "Ceiling bypassed for $mode")
+        }
     }
 
     @Test
@@ -261,6 +263,112 @@ class NpcCollisionControllerTest {
 
         assertEquals(Pos(0.0, 0.0, -2.0, 73f, -18f), event.newPosition)
         assertEquals(0, fixture.scheduled.size)
+    }
+
+    @Test
+    fun `solid accepts native axis separated motion around every mirrored corner`() {
+        for (swap in listOf(false, true)) for (xSign in listOf(-1, 1)) for (zSign in
+            listOf(-1, 1)) {
+            val fixture =
+                Fixture(
+                    NpcCollision(NpcCollisionMode.SOLID),
+                    colliderWidth = if (swap) 0.6875 else 1.0,
+                    colliderHeight = 1.9375,
+                    colliderDepth = if (swap) 1.0 else 0.6875,
+                )
+            val x = if (swap) 0.63125 else 0.81
+            val z = if (swap) 0.81 else 0.63125
+            val dx = if (swap) 0.11 else -0.10
+            val dz = if (swap) -0.10 else 0.11
+            val old = Pos(x * xSign, 0.0, z * zSign)
+            fixture.player.teleport(old).join()
+            val requested = old.add(dx * xSign, 0.0, dz * zSign).withView(31f, -12f)
+            assertEquals(
+                requested,
+                fixture.move(requested).newPosition,
+                "Native corner path rejected: swap=$swap x=$xSign z=$zSign",
+            )
+        }
+    }
+
+    @Test
+    fun `solid never combines different axis orders across blockers`() {
+        val fixture =
+            Fixture(NpcCollision(NpcCollisionMode.SOLID), colliderWidth = 1.0, colliderDepth = 1.0)
+        fixture.addCollider(Vec3(0.0, 0.0, -1.0))
+        fixture.addCollider(Vec3(-1.0, 0.0, 0.0))
+        val old = Pos(-1.0, 0.0, -1.0)
+        fixture.player.teleport(old).join()
+        assertEquals(old, fixture.move(Pos(1.0, 0.0, 1.0)).newPosition)
+    }
+
+    @Test
+    fun `solid rejects diagonal tunneling when neither axis order clears`() {
+        val fixture =
+            Fixture(NpcCollision(NpcCollisionMode.SOLID), colliderWidth = 1.0, colliderDepth = 1.0)
+        val old = Pos(-2.0, 0.0, 0.0)
+        fixture.player.teleport(old).join()
+        assertEquals(old, fixture.move(Pos(2.0, 0.0, 0.1)).newPosition)
+    }
+
+    @Test
+    fun `solid corner alternative cannot pass through bounce blockers on either axis route`() {
+        val fixture =
+            Fixture(NpcCollision(NpcCollisionMode.SOLID), colliderWidth = 1.0, colliderDepth = 1.0)
+        // The straight chord hits only the central SOLID. Each detour hits a BOUNCE
+        // obstacle which is outside that chord, so the fallback must inspect both modes.
+        fixture.addCollider(Vec3(-1.3, 0.0, 0.4), NpcCollision(NpcCollisionMode.BOUNCE, 6.0))
+        fixture.addCollider(Vec3(0.4, 0.0, -1.3), NpcCollision(NpcCollisionMode.BOUNCE, 6.0))
+        val old = Pos(-1.0, 0.0, -1.0)
+        fixture.player.teleport(old).join()
+
+        assertEquals(old, fixture.move(Pos(1.0, 0.0, 1.0)).newPosition)
+        assertTrue(fixture.scheduled.isEmpty())
+    }
+
+    @Test
+    fun `bounce corner contact retains correction and impulse despite clear axis route`() {
+        val fixture =
+            Fixture(
+                NpcCollision(NpcCollisionMode.BOUNCE, 6.0),
+                colliderWidth = 1.0,
+                colliderHeight = 1.9375,
+                colliderDepth = 0.6875,
+            )
+        val old = Pos(-0.81, 0.0, 0.63125)
+        fixture.player.teleport(old).join()
+
+        assertEquals(old, fixture.move(old.add(0.10, 0.0, 0.11)).newPosition)
+        assertEquals(1, fixture.scheduled.size)
+        fixture.runScheduled()
+        assertEquals(1, fixture.velocityPackets().size)
+    }
+
+    @Test
+    fun `solid low jump cannot use an axis route through the obstacle`() {
+        val fixture = Fixture(NpcCollision(NpcCollisionMode.SOLID))
+        val event = fixture.move(Pos(0.0, 0.4, 2.0))
+        assertEquals(Pos(0.0, 0.4, -2.0), event.newPosition)
+        assertTrue(fixture.scheduled.isEmpty())
+    }
+
+    @Test
+    fun `solid clear npc corner route cannot pass through a block wall`() {
+        val fixture =
+            Fixture(
+                NpcCollision(NpcCollisionMode.SOLID),
+                colliderWidth = 1.0,
+                colliderHeight = 1.9375,
+                colliderDepth = 0.6875,
+            )
+        val old = Pos(-0.81, 0.0, 0.63125)
+        fixture.player.teleport(old).join()
+        // Z-then-X clears the NPC corner but the player's leading Z face enters
+        // this ordinary wall. X-then-Z is already blocked by the NPC.
+        fixture.instance.setBlock(-1, 0, 1, Block.STONE)
+
+        assertEquals(old, fixture.move(old.add(0.10, 0.0, 0.11)).newPosition)
+        assertTrue(fixture.scheduled.isEmpty())
     }
 
     @Test
@@ -608,6 +716,28 @@ class NpcCollisionControllerTest {
                 )
             active[overhead.id] = element
             ownership[entity.uuid] = overhead.id
+            controller.colliderChanged(element)
+        }
+
+        fun addCollider(position: Vec3, collision: NpcCollision = npc.collision) {
+            val extra = npc(collision, true, LocalId("extra-${active.size}"), position)
+            val entity =
+                Entity(EntityType.INTERACTION).also {
+                    it.boundingBox = BoundingBox(colliderWidth, colliderHeight, colliderDepth)
+                    it.setInstance(instance, Pos(position.x, position.y, position.z)).join()
+                }
+            val element =
+                ActiveElement(
+                    extra.id,
+                    1L,
+                    emptyList(),
+                    NpcPlatformEntities(null, entity),
+                    extra,
+                    initialTransform = SceneRenderTransform(extra.transform, null),
+                    colliderChanged = controller::colliderChanged,
+                )
+            active[extra.id] = element
+            ownership[entity.uuid] = extra.id
             controller.colliderChanged(element)
         }
 
