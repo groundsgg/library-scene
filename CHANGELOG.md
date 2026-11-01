@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.4](https://github.com/groundsgg/library-scene/compare/v0.4.3...v0.4.4) (2026-11-01)
+
+
+### Bug Fixes
+
+* **scene:** share hover selection and keep head tracking upright ([#20](https://github.com/groundsgg/library-scene/issues/20)) ([45de6db](https://github.com/groundsgg/library-scene/commit/45de6db86772c91ec00a5207325b13d477213f47))
+
 ## [0.4.3](https://github.com/groundsgg/library-scene/compare/v0.4.2...v0.4.3) (2026-10-13)
 
 
