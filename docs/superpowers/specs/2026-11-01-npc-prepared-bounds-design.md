@@ -1,0 +1,7 @@
+# N32 prepared hover bounds
+
+Conditional follow-up after N20 measurement: cache an immutable inverse transform per ActiveElement/root/local value, so20viewers do not recreate the same affine matrices for every hover ray. Preserve the exact slab intersection, normalized world-distance/reach rules and all existing SceneBoundsRaycaster.distance callers.
+
+Add SceneBoundsRaycaster.prepare(bounds,root,local): PreparedBounds with distance(eye,direction,maximumDistance). The legacy distance API delegates through a fresh preparation. ActiveElement owns the cached prepared value and matching immutable SceneRenderTransform; a changed root/local or new ActiveElement requires a new preparation. Npc.interactionBounds is immutable for that element's lifetime; removing/reloading the element releases its cache. BoundsRaycaster uses the active prepared value. No global/weak cache, no timing heuristics, no collision geometry changes or listener invalidation burden. Do not cache viewer position/direction. WorldBounds/collision caching remains outside this small change.
+
+Test repeated reuse, root/rotation/scale/local changes, fresh generation/bounds, fallback authored transform, inside/miss/reach/invalid rays and nonuniform-root+rotated-local shear. Use hand-derived fixture distances plus the existing raycast suite. Measure against the frozen N20 candidate on the same prelitMap9,20clients andmixed7/7/6layout. Retain only a measured reduction in CPU/allocation without semantic failures.

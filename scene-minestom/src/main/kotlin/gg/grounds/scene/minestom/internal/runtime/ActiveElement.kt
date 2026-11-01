@@ -3,6 +3,7 @@ package gg.grounds.scene.minestom.internal.runtime
 import gg.grounds.scene.format.LocalId
 import gg.grounds.scene.format.Npc
 import gg.grounds.scene.format.NpcCollisionMode
+import gg.grounds.scene.interaction.SceneBoundsRaycaster
 import gg.grounds.scene.minestom.RenderedAssetHandle
 import gg.grounds.scene.minestom.SceneRenderTransform
 import gg.grounds.scene.minestom.internal.collision.requireSupportedCollisionGeometry
@@ -36,6 +37,8 @@ internal class ActiveElement(
     private val colliderChanged: (ActiveElement) -> Unit = {},
 ) : AutoCloseable {
     private var runtimeTransform: SceneRenderTransform? = initialTransform
+    private var preparedBoundsTransform: SceneRenderTransform? = null
+    private var preparedBounds: SceneBoundsRaycaster.PreparedBounds? = null
     private val closed = AtomicBoolean()
 
     val currentTransform: SceneRenderTransform
@@ -43,6 +46,23 @@ internal class ActiveElement(
 
     fun transformOr(authored: SceneRenderTransform): SceneRenderTransform =
         runtimeTransform ?: authored
+
+    /** Geometry is immutable for this element; only root/local changes need a new inverse. */
+    fun preparedInteractionBounds(): SceneBoundsRaycaster.PreparedBounds {
+        val authored = checkNotNull(npc) { "Only NPC elements have interaction bounds." }
+        val transform = runtimeTransform ?: SceneRenderTransform(authored.transform, null)
+        val cached = preparedBounds
+        if (cached != null && preparedBoundsTransform == transform) return cached
+        return SceneBoundsRaycaster.prepare(
+                authored.interactionBounds,
+                transform.root,
+                transform.local,
+            )
+            .also {
+                preparedBounds = it
+                preparedBoundsTransform = transform
+            }
+    }
 
     fun currentBounds(): WorldBounds =
         npc?.interactionBounds?.transformed(currentTransform.affine())

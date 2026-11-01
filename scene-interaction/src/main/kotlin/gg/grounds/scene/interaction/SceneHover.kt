@@ -8,6 +8,15 @@ import kotlin.math.min
 
 /** Ray against the transformed local NPC bounds; returned distance is in world units. */
 object SceneBoundsRaycaster {
+    /** Immutable geometry preparation, reusable across viewer rays until the transform changes. */
+    fun prepare(bounds: LocalBounds, root: Transform, local: Transform?): PreparedBounds =
+        PreparedBounds(
+            bounds,
+            AffineTransform.from(root)
+                .let { matrix -> local?.let { matrix * AffineTransform.from(it) } ?: matrix }
+                .inverse(),
+        )
+
     fun distance(
         bounds: LocalBounds,
         root: Transform,
@@ -15,38 +24,39 @@ object SceneBoundsRaycaster {
         eye: Vec3,
         direction: Vec3,
         maximumDistance: Double,
-    ): Double? {
-        require(maximumDistance.isFinite() && maximumDistance > 0.0)
-        val length = hypot(hypot(direction.x, direction.y), direction.z)
-        require(length.isFinite() && length > 0.0)
-        val normalized = Vec3(direction.x / length, direction.y / length, direction.z / length)
-        val transform =
-            AffineTransform.from(root)
-                .let { matrix -> local?.let { matrix * AffineTransform.from(it) } ?: matrix }
-                .inverse()
-        val origin = transform.transform(eye)
-        val delta = transform.transformVector(normalized)
-        var enter = Double.NEGATIVE_INFINITY
-        var exit = Double.POSITIVE_INFINITY
-        listOf(
-                Triple(origin.x, delta.x, bounds.center.x to bounds.size.x),
-                Triple(origin.y, delta.y, bounds.center.y to bounds.size.y),
-                Triple(origin.z, delta.z, bounds.center.z to bounds.size.z),
-            )
-            .forEach { (o, d, bound) ->
-                val low = bound.first - bound.second / 2
-                val high = bound.first + bound.second / 2
-                if (d == 0.0) {
-                    if (o < low || o > high) return null
-                } else {
-                    val a = (low - o) / d
-                    val b = (high - o) / d
-                    enter = max(enter, min(a, b))
-                    exit = min(exit, max(a, b))
+    ): Double? = prepare(bounds, root, local).distance(eye, direction, maximumDistance)
+
+    class PreparedBounds
+    internal constructor(private val bounds: LocalBounds, private val inverse: AffineTransform) {
+        fun distance(eye: Vec3, direction: Vec3, maximumDistance: Double): Double? {
+            require(maximumDistance.isFinite() && maximumDistance > 0.0)
+            val length = hypot(hypot(direction.x, direction.y), direction.z)
+            require(length.isFinite() && length > 0.0)
+            val normalized = Vec3(direction.x / length, direction.y / length, direction.z / length)
+            val origin = inverse.transform(eye)
+            val delta = inverse.transformVector(normalized)
+            var enter = Double.NEGATIVE_INFINITY
+            var exit = Double.POSITIVE_INFINITY
+            listOf(
+                    Triple(origin.x, delta.x, bounds.center.x to bounds.size.x),
+                    Triple(origin.y, delta.y, bounds.center.y to bounds.size.y),
+                    Triple(origin.z, delta.z, bounds.center.z to bounds.size.z),
+                )
+                .forEach { (o, d, bound) ->
+                    val low = bound.first - bound.second / 2
+                    val high = bound.first + bound.second / 2
+                    if (d == 0.0) {
+                        if (o < low || o > high) return null
+                    } else {
+                        val a = (low - o) / d
+                        val b = (high - o) / d
+                        enter = max(enter, min(a, b))
+                        exit = min(exit, max(a, b))
+                    }
                 }
-            }
-        val hit = max(0.0, enter)
-        return hit.takeIf { exit >= hit && hit <= maximumDistance }
+            val hit = max(0.0, enter)
+            return hit.takeIf { exit >= hit && hit <= maximumDistance }
+        }
     }
 }
 

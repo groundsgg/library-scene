@@ -16,14 +16,8 @@ internal class BoundsRaycaster {
         direction: Vec3,
         maximumDistance: Double,
     ): Double? {
-        val npc = active.npc ?: return null
-        return distance(
-            npc,
-            active.transformOr(SceneRenderTransform(npc.transform, null)),
-            eye,
-            direction,
-            maximumDistance,
-        )
+        if (active.npc == null) return null
+        return active.preparedInteractionBounds().distance(eye, direction, maximumDistance)
     }
 
     private fun distance(
