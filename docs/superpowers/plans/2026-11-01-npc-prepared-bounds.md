@@ -31,7 +31,9 @@ Interfaces: SceneBoundsRaycaster.prepare(bounds:LocalBounds,root:Transform,local
 - [x] Run focused tests and observe missing behavior.
 - [x] Extract immutable preparation while keeping slab calculations/legacy entry point; add element-owned cache and consume it only for hover.
 - [x] Run entire Scene and licensedHost suites, format, and fresh correctness review.
-- [ ] Freeze artifact and run matched20client N20/N32 performance pair; compare CPU/allocation and typed profiles.
+- [x] Freeze artifact and run matched20client N20/N32 performance pair; compare CPU/allocation and typed profiles.
 - [ ] Commit/update backlog and activate only the independently measured result on Stage.
 
 Validation:272Scene tests,170licensed Host tests,0failures/skips; format checks pass. Fresh independent reviewer found no blockers and suggested explicit rotation-only invalidation coverage; added root/local90degree warm-cache regression, full suite272green. Frozen N20baselinec481fd7 versus bounds candidatec3e662a9; matched20clientpair running. No collision/worldbounds code changed.
+
+Numerical acceptance:20actual clients,7/7/6layout,55ssteady delta after100swarmup, separate60s/2msJFR. Allocation27.526→21.992MB/s(-20.10%); mean1.0216→1.0103ms(-1.11%); CPU0.07956→0.08156cores(+2.52%); p95/p99 -0.60/-1.15%; bothTPS20,0disconnects,0DataLoss. Ruling: retain as an allocation/GC-pressure improvement for Stage testing, not a CPU-speedup claim. The small observed CPU increase is reported explicitly; this single pair cannot establish neutrality or a universal gain. Native waiting samples are not counted asCPU. Raycast allocation pressure drops below top30from330.9MBsampleweight (not an absolute rate).
