@@ -37,23 +37,44 @@ object SceneBoundsRaycaster {
             val delta = inverse.transformVector(normalized)
             var enter = Double.NEGATIVE_INFINITY
             var exit = Double.POSITIVE_INFINITY
-            listOf(
-                    Triple(origin.x, delta.x, bounds.center.x to bounds.size.x),
-                    Triple(origin.y, delta.y, bounds.center.y to bounds.size.y),
-                    Triple(origin.z, delta.z, bounds.center.z to bounds.size.z),
-                )
-                .forEach { (o, d, bound) ->
-                    val low = bound.first - bound.second / 2
-                    val high = bound.first + bound.second / 2
-                    if (d == 0.0) {
-                        if (o < low || o > high) return null
-                    } else {
-                        val a = (low - o) / d
-                        val b = (high - o) / d
-                        enter = max(enter, min(a, b))
-                        exit = min(exit, max(a, b))
+            for (axis in 0..2) {
+                val o: Double
+                val d: Double
+                val center: Double
+                val size: Double
+                when (axis) {
+                    0 -> {
+                        o = origin.x
+                        d = delta.x
+                        center = bounds.center.x
+                        size = bounds.size.x
+                    }
+
+                    1 -> {
+                        o = origin.y
+                        d = delta.y
+                        center = bounds.center.y
+                        size = bounds.size.y
+                    }
+
+                    else -> {
+                        o = origin.z
+                        d = delta.z
+                        center = bounds.center.z
+                        size = bounds.size.z
                     }
                 }
+                val low = center - size / 2
+                val high = center + size / 2
+                if (d == 0.0) {
+                    if (o < low || o > high) return null
+                } else {
+                    val a = (low - o) / d
+                    val b = (high - o) / d
+                    enter = max(enter, min(a, b))
+                    exit = min(exit, max(a, b))
+                }
+            }
             val hit = max(0.0, enter)
             return hit.takeIf { exit >= hit && hit <= maximumDistance }
         }
