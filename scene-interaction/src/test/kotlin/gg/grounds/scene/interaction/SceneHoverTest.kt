@@ -52,7 +52,7 @@ class SceneHoverTest {
     }
 
     @Test
-    fun `parallel slabs preserve inclusive faces signed zero and world reach on every axis`() {
+    fun `parallel slabs preserve inclusive faces negative zero inputs and world reach on every axis`() {
         val prepared = SceneBoundsRaycaster.prepare(bounds, transform(), null)
         val cases =
             listOf(
@@ -63,6 +63,7 @@ class SceneHoverTest {
                 Vec3(0.0, 0.0, -4.0) to Vec3(0.0, -0.0, 2.0),
                 Vec3(0.0, 0.0, 4.0) to Vec3(-0.0, 0.0, -2.0),
                 Vec3(1.0, 1.0, -4.0) to Vec3(0.0, -0.0, 2.0),
+                Vec3(-4.0, 0.0, -1.0) to Vec3(2.0, -0.0, 0.0),
             )
         cases.forEach { (eye, direction) ->
             assertEquals(
