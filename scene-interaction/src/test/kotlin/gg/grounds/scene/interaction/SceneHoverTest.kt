@@ -52,6 +52,74 @@ class SceneHoverTest {
     }
 
     @Test
+    fun `parallel slabs preserve inclusive faces signed zero and world reach on every axis`() {
+        val prepared = SceneBoundsRaycaster.prepare(bounds, transform(), null)
+        val cases =
+            listOf(
+                Vec3(-4.0, 0.0, 0.0) to Vec3(2.0, -0.0, 0.0),
+                Vec3(4.0, 0.0, 0.0) to Vec3(-2.0, 0.0, -0.0),
+                Vec3(0.0, -4.0, 0.0) to Vec3(-0.0, 2.0, 0.0),
+                Vec3(0.0, 4.0, 0.0) to Vec3(0.0, -2.0, -0.0),
+                Vec3(0.0, 0.0, -4.0) to Vec3(0.0, -0.0, 2.0),
+                Vec3(0.0, 0.0, 4.0) to Vec3(-0.0, 0.0, -2.0),
+                Vec3(1.0, 1.0, -4.0) to Vec3(0.0, -0.0, 2.0),
+            )
+        cases.forEach { (eye, direction) ->
+            assertEquals(
+                3.0.toRawBits(),
+                assertNotNull(prepared.distance(eye, direction, 3.0)).toRawBits(),
+            )
+            assertNull(prepared.distance(eye, direction, Math.nextDown(3.0)))
+        }
+        assertNull(prepared.distance(Vec3(Math.nextUp(1.0), 0.0, -4.0), Vec3(-0.0, 0.0, 1.0), 5.0))
+        assertNull(prepared.distance(Vec3(0.0, Math.nextUp(1.0), -4.0), Vec3(0.0, -0.0, 1.0), 5.0))
+        assertNull(prepared.distance(Vec3(-4.0, 0.0, Math.nextUp(1.0)), Vec3(1.0, 0.0, -0.0), 5.0))
+        assertNull(prepared.distance(Vec3(0.0, 0.0, 4.0), Vec3(0.0, 0.0, 1.0), 5.0))
+    }
+
+    @Test
+    fun `prepared rays remain independent after inside face and missed queries`() {
+        val prepared = SceneBoundsRaycaster.prepare(bounds, transform(), null)
+        val other = SceneBoundsRaycaster.prepare(bounds, transform(Vec3(10.0, 0.0, 0.0)), null)
+        repeat(3) {
+            assertEquals(
+                0.0.toRawBits(),
+                assertNotNull(prepared.distance(zero, Vec3(1.0, 0.0, 0.0), 5.0)).toRawBits(),
+            )
+            assertEquals(
+                0.0.toRawBits(),
+                assertNotNull(prepared.distance(Vec3(1.0, 0.0, 0.0), Vec3(1.0, 0.0, 0.0), 5.0))
+                    .toRawBits(),
+            )
+            assertNull(prepared.distance(Vec3(2.0, 0.0, -4.0), Vec3(0.0, 0.0, 1.0), 5.0))
+            assertEquals(9.0, other.distance(zero, Vec3(2.0, 0.0, 0.0), 10.0))
+            assertEquals(3.0, prepared.distance(Vec3(0.0, 0.0, -4.0), Vec3(0.0, 0.0, 2.0), 5.0))
+        }
+    }
+
+    @Test
+    fun `prepared rays reject invalid reach and overflowing direction length`() {
+        val prepared = SceneBoundsRaycaster.prepare(bounds, transform(), null)
+        for (reach in
+            listOf(
+                0.0,
+                -0.0,
+                -1.0,
+                Double.NaN,
+                Double.POSITIVE_INFINITY,
+                Double.NEGATIVE_INFINITY,
+            )) {
+            assertFailsWith<IllegalArgumentException> {
+                prepared.distance(zero, Vec3(1.0, 0.0, 0.0), reach)
+            }
+        }
+        assertFailsWith<IllegalArgumentException> { prepared.distance(zero, zero, 5.0) }
+        assertFailsWith<IllegalArgumentException> {
+            prepared.distance(zero, Vec3(Double.MAX_VALUE, Double.MAX_VALUE, 0.0), 5.0)
+        }
+    }
+
+    @Test
     fun `nearest tie and transitions stay independent per viewer and clean up`() {
         val selector = SceneHoverSelector()
         val a = UUID.randomUUID()
