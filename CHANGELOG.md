@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.5](https://github.com/groundsgg/library-scene/compare/v0.4.4...v0.4.5) (2026-11-05)
+
+
+### Bug Fixes
+
+* **scene:** accept valid native SOLID corner movement ([#22](https://github.com/groundsgg/library-scene/issues/22)) ([d7a03b8](https://github.com/groundsgg/library-scene/commit/d7a03b8ccc01582fe0bb8415c81259a0e530672d))
+
+
+### Performance Improvements
+
+* **scene:** avoid temporary objects in prepared hover rays ([#26](https://github.com/groundsgg/library-scene/issues/26)) ([0bd7f98](https://github.com/groundsgg/library-scene/commit/0bd7f983737e717cef340a14c32b69759bfa33fc))
+* **scene:** filter NPC collision candidates before collection ([#27](https://github.com/groundsgg/library-scene/issues/27)) ([ca87b78](https://github.com/groundsgg/library-scene/commit/ca87b78f79ffa5fc9abb5b2bbbfc3bf2ef08d6f4))
+* **scene:** resolve hover owners during tracker collection ([#24](https://github.com/groundsgg/library-scene/issues/24)) ([1934266](https://github.com/groundsgg/library-scene/commit/19342662aa9af2ac4482097052c7e1e83243fab6))
+* **scene:** reuse prepared hover bounds across viewers ([#25](https://github.com/groundsgg/library-scene/issues/25)) ([078e135](https://github.com/groundsgg/library-scene/commit/078e1358d39d5690ea5b50c9ee2e78522b20c695))
+
 ## [0.4.4](https://github.com/groundsgg/library-scene/compare/v0.4.3...v0.4.4) (2026-11-01)
 
 
