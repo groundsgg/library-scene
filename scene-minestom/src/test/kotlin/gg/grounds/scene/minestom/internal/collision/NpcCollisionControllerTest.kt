@@ -40,6 +40,33 @@ import org.junit.jupiter.api.Test
 
 class NpcCollisionControllerTest {
     @Test
+    fun `dense unrelated displays bypass npc candidate validation without losing solid contact`() {
+        val fixture = Fixture(NpcCollision(NpcCollisionMode.SOLID, 6.0))
+        val decorations =
+            List(128) {
+                InstanceCountingEntity().also { entity ->
+                    entity.setInstance(fixture.instance, Pos(0.0, 0.0, 0.0)).join()
+                }
+            }
+        decorations.forEach { it.instanceReads = 0 }
+
+        val event = fixture.move(Pos(0.0, 0.0, 2.0))
+
+        assertEquals(Pos(0.0, 0.0, -2.0), event.newPosition)
+        assertTrue(fixture.scheduled.isEmpty())
+        assertEquals(0, decorations.sumOf { it.instanceReads })
+    }
+
+    private class InstanceCountingEntity : Entity(EntityType.ITEM_DISPLAY) {
+        var instanceReads = 0
+
+        override fun getInstance(): net.minestom.server.instance.Instance? {
+            instanceReads++
+            return super.getInstance()
+        }
+    }
+
+    @Test
     fun `projected jump correction cannot enter or pass through a second overhead npc`() {
         listOf(NpcCollisionMode.SOLID, NpcCollisionMode.BOUNCE).forEach { mode ->
             listOf(2.0, 6.0).forEach { requestedY ->
