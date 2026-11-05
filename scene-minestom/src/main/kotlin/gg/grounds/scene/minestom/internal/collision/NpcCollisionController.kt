@@ -124,7 +124,11 @@ internal class NpcCollisionController(
             old,
             queryRadius,
             EntityTracker.Target.ENTITIES,
-            candidates::add,
+            { entity ->
+                // Displays and unrelated players cannot participate in an NPC sweep. Filter
+                // before collecting them; candidate() still revalidates current ownership.
+                if (interactionElementId(entity.uuid) != null) candidates.add(entity)
+            },
         )
         val hit =
             candidates
