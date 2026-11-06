@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.6](https://github.com/groundsgg/library-scene/compare/v0.4.5...v0.4.6) (2026-11-06)
+
+
+### Performance Improvements
+
+* **scene:** reuse unchanged NPC world bounds ([#28](https://github.com/groundsgg/library-scene/issues/28)) ([a0a815c](https://github.com/groundsgg/library-scene/commit/a0a815c55e13bfddbee051d24cc85e4864da85c8))
+
 ## [0.4.5](https://github.com/groundsgg/library-scene/compare/v0.4.4...v0.4.5) (2026-11-05)
 
 
