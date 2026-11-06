@@ -39,6 +39,8 @@ internal class ActiveElement(
     private var runtimeTransform: SceneRenderTransform? = initialTransform
     private var preparedBoundsTransform: SceneRenderTransform? = null
     private var preparedBounds: SceneBoundsRaycaster.PreparedBounds? = null
+    private var worldBoundsTransform: SceneRenderTransform? = null
+    private var worldBounds: WorldBounds? = null
     private val closed = AtomicBoolean()
 
     val currentTransform: SceneRenderTransform
@@ -64,9 +66,16 @@ internal class ActiveElement(
             }
     }
 
-    fun currentBounds(): WorldBounds =
-        npc?.interactionBounds?.transformed(currentTransform.affine())
-            ?: error("Only NPC elements have interaction bounds.")
+    fun currentBounds(): WorldBounds {
+        val bounds = npc?.interactionBounds ?: error("Only NPC elements have interaction bounds.")
+        val transform = currentTransform
+        val cached = worldBounds
+        if (cached != null && worldBoundsTransform == transform) return cached
+        return bounds.transformed(transform.affine()).also {
+            worldBounds = it
+            worldBoundsTransform = transform
+        }
+    }
 
     fun handlesFor(partId: LocalId?): List<RenderedAssetHandle> =
         if (partId == null) handles
