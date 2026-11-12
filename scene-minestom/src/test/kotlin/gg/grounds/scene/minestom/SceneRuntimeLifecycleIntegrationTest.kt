@@ -55,6 +55,285 @@ import org.junit.jupiter.api.Test
 
 class SceneRuntimeLifecycleIntegrationTest {
     @Test
+    fun `unrecoverable owner rejection invalidates and drains explicitly owned pending cleanup`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val owner = Thread.currentThread()
+        val armed = AtomicBoolean()
+        val entered = AtomicBoolean()
+        val cancelled = AtomicBoolean()
+        val cleanup = CompletableFuture<Void>()
+        val delivered = CompletableFuture<RenderedAssetHandle>()
+        val factory =
+            object : ScopedSceneAssetRendererFactory {
+                override fun create(
+                    context: SceneAssetRenderContext
+                ): CompletionStage<RenderedAssetHandle> = error("Legacy path")
+
+                override fun createScoped(
+                    context: SceneAssetRenderContext,
+                    lifetime: SceneRendererLifetime,
+                ): CompletionStage<RenderedAssetHandle> {
+                    lifetime.trackCleanup(cleanup)
+                    lifetime.onInvalidated(Runnable { cancelled.set(true) })
+                    entered.set(true)
+                    return delivered
+                }
+            }
+        val registry = SceneAssetRendererRegistry { _, _ -> factory }
+        val request =
+            request(
+                instance,
+                registry,
+                RecordingActions(),
+                scene = alwaysPropScene(),
+                assetCatalog = propAssets(),
+            )
+        val creating =
+            DefaultSceneRuntime.create(
+                    request,
+                    checkNotNull(readiness(request).capabilities),
+                    schedule = { action ->
+                        if (armed.get() && Thread.currentThread() !== owner)
+                            throw IllegalStateException("Owner unavailable")
+                        instance.scheduler().execute(action)
+                    },
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { entered.get() }
+        armed.set(true)
+        Thread.startVirtualThread { delivered.complete(RecordingHandle(instance)) }.join()
+        assertTrue(cancelled.get(), "Fatal rejected delivery must invalidate a scoped start")
+        assertFalse(
+            creating.isDone,
+            "Explicit pending cleanup must drain before returning failed creation",
+        )
+        Thread.startVirtualThread { cleanup.complete(null) }.join()
+        assertIs<SceneRuntimeCreationResult.Failure>(creating.get(1, TimeUnit.SECONDS))
+    }
+
+    @Test
+    fun `runtime close fails on pending start cleanup error delivered before close`() =
+        assertHiddenCleanupFailure(false)
+
+    @Test
+    fun `runtime close fails on pending start cleanup error delivered during close`() =
+        assertHiddenCleanupFailure(true)
+
+    private fun assertHiddenCleanupFailure(closeFirst: Boolean) {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        Player(FakeConnection(), GameProfile(UUID.randomUUID(), "Alex"))
+            .setInstance(instance, Pos.ZERO)
+            .join()
+        val cleanup = CompletableFuture<Void>()
+        val delivered = CompletableFuture<RenderedAssetHandle>()
+        val entered = AtomicBoolean()
+        val cancelled = AtomicBoolean()
+        val factory =
+            object : ScopedSceneAssetRendererFactory {
+                override fun create(
+                    context: SceneAssetRenderContext
+                ): CompletionStage<RenderedAssetHandle> = error("Legacy path")
+
+                override fun createScoped(
+                    context: SceneAssetRenderContext,
+                    lifetime: SceneRendererLifetime,
+                ): CompletionStage<RenderedAssetHandle> {
+                    lifetime.trackCleanup(cleanup)
+                    lifetime.onInvalidated(
+                        Runnable {
+                            cancelled.set(true)
+                            cleanup.whenComplete { _, error ->
+                                delivered.completeExceptionally(
+                                    java.util.concurrent
+                                        .CancellationException("Hidden start cancelled")
+                                        .also { if (error != null) it.addSuppressed(error) }
+                                )
+                            }
+                        }
+                    )
+                    entered.set(true)
+                    return delivered
+                }
+            }
+        val registry = SceneAssetRendererRegistry { _, _ -> factory }
+        val creating =
+            SceneRuntimeFactory.create(
+                    request(
+                        instance,
+                        registry,
+                        RecordingActions(),
+                        scene = automaticPropScene(),
+                        assetCatalog = propAssets(),
+                        config = SceneRuntimeConfig(spatialIntervalTicks = 1),
+                    )
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { creating.isDone }
+        val runtime = assertIs<SceneRuntimeCreationResult.Success>(creating.get()).runtime
+        tickUntil(instance) { entered.get() }
+        val closing = if (closeFirst) runtime.close().toCompletableFuture() else null
+        if (!closeFirst)
+            delivered.completeExceptionally(IllegalStateException("Preparation failed"))
+        tickUntil(instance) { cancelled.get() }
+        if (closing != null) assertFalse(closing.isDone)
+        cleanup.completeExceptionally(IllegalStateException("Hidden cleanup failed"))
+        val result = closing ?: runtime.close().toCompletableFuture()
+        tickUntil(instance) { result.isDone }
+        assertFailsWith<ExecutionException> { result.get() }
+    }
+
+    @Test
+    fun `failed installation preserves asynchronous rollback failure diagnostics`() =
+        assertInstallationRollback(false, true)
+
+    @Test
+    fun `failed installation result waits for delayed rollback`() =
+        assertInstallationRollback(false)
+
+    @Test
+    fun `rejected installation continuation waits for delayed rollback`() =
+        assertInstallationRollback(true)
+
+    private fun assertInstallationRollback(
+        rejectContinuation: Boolean,
+        failCleanup: Boolean = false,
+    ) {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val cleanup = CompletableFuture<Void>()
+        val closing = AtomicBoolean()
+        val deliveries = mutableListOf<CompletableFuture<RenderedAssetHandle>>()
+        val registry = SceneAssetRendererRegistry { _, _ ->
+            SceneAssetRendererFactory {
+                CompletableFuture<RenderedAssetHandle>().also { deliveries += it }
+            }
+        }
+        val request =
+            request(
+                instance,
+                registry,
+                RecordingActions(),
+                scene = alwaysPropPairScene(),
+                assetCatalog = propAssets(),
+            )
+        var accepted = -1
+        val creating =
+            DefaultSceneRuntime.create(
+                    request,
+                    checkNotNull(readiness(request).capabilities),
+                    schedule = { action ->
+                        if (accepted == 0) {
+                            accepted = -1
+                            throw IllegalStateException("Continuation rejected")
+                        }
+                        if (accepted > 0) accepted--
+                        instance.scheduler().execute(action)
+                    },
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { deliveries.size == 1 }
+        deliveries[0].complete(
+            object : AsyncRenderedAssetHandle, RenderedAssetHandle by RecordingHandle(instance) {
+                override fun closeAsync(): CompletionStage<Void> {
+                    closing.set(true)
+                    return cleanup
+                }
+            }
+        )
+        tickUntil(instance) { deliveries.size == 2 }
+        if (rejectContinuation) {
+            accepted = 1
+            deliveries[1].complete(RecordingHandle(instance))
+        } else deliveries[1].completeExceptionally(IllegalStateException("Second renderer failed"))
+        tickUntil(instance) { closing.get() }
+        assertFalse(creating.isDone, "Caller must not dispose the instance before rollback drains")
+        if (failCleanup)
+            cleanup.completeExceptionally(IllegalStateException("Delayed rollback cleanup failed"))
+        else cleanup.complete(null)
+        tickUntil(instance) { creating.isDone }
+        val failure = assertIs<SceneRuntimeCreationResult.Failure>(creating.get())
+        if (failCleanup)
+            assertTrue(
+                failure.problems.single().message.contains("Delayed rollback cleanup failed")
+            )
+    }
+
+    @Test
+    fun `late asynchronous renderer command failure invalidates its active generation`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        lateinit var lifetime: SceneRendererLifetime
+        val handle = RecordingHandle(instance)
+        val factory =
+            object : ScopedSceneAssetRendererFactory {
+                override fun create(
+                    context: SceneAssetRenderContext
+                ): CompletionStage<RenderedAssetHandle> = error("Legacy path")
+
+                override fun createScoped(
+                    context: SceneAssetRenderContext,
+                    scope: SceneRendererLifetime,
+                ): CompletionStage<RenderedAssetHandle> {
+                    lifetime = scope
+                    return CompletableFuture.completedFuture(handle)
+                }
+            }
+        val registry = SceneAssetRendererRegistry { _, _ -> factory }
+        val creating =
+            SceneRuntimeFactory.create(
+                    request(
+                        instance,
+                        registry,
+                        RecordingActions(),
+                        scene = alwaysPropScene(),
+                        assetCatalog = propAssets(),
+                    )
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { creating.isDone }
+        val runtime = assertIs<SceneRuntimeCreationResult.Success>(creating.get()).runtime
+        lifetime.reportFailure(IllegalStateException("async render failed"))
+        tickUntil(instance) { handle.closed }
+        assertFalse(lifetime.isCurrent())
+        runtime.close().toCompletableFuture().also { tickUntil(instance, it::isDone) }.get()
+    }
+
+    @Test
+    fun `runtime close waits for asynchronous renderer cleanup registered by active elements`() {
+        val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+        val cleanup = CompletableFuture<Void>()
+        val closeRequested = AtomicBoolean()
+        val handle =
+            object : AsyncRenderedAssetHandle, RenderedAssetHandle by RecordingHandle(instance) {
+                override fun closeAsync(): CompletionStage<Void> {
+                    closeRequested.set(true)
+                    return cleanup
+                }
+            }
+        val registry = SceneAssetRendererRegistry { _, _ ->
+            SceneAssetRendererFactory { CompletableFuture.completedFuture(handle) }
+        }
+        val creating =
+            SceneRuntimeFactory.create(
+                    request(
+                        instance,
+                        registry,
+                        RecordingActions(),
+                        scene = alwaysPropScene(),
+                        assetCatalog = propAssets(),
+                    )
+                )
+                .toCompletableFuture()
+        tickUntil(instance) { creating.isDone }
+        val runtime = assertIs<SceneRuntimeCreationResult.Success>(creating.get()).runtime
+        val closing = runtime.close().toCompletableFuture()
+        tickUntil(instance) { closeRequested.get() }
+        repeat(3) { instance.tick(0) }
+        assertFalse(closing.isDone, "Async cleanup must join the runtime resource drain")
+        cleanup.complete(null)
+        tickUntil(instance) { closing.isDone }
+        closing.get()
+    }
+
+    @Test
     fun `native airborne side contact does not rewind jump height or send stale downward velocity`() {
         listOf(Triple(1.05, 0.3, true), Triple(0.55, -0.2, false), Triple(0.75, 0.0, false))
             .forEach { (requestedY, expectedPacketY, previouslyGrounded) ->

@@ -124,3 +124,24 @@ Text components may not contain click events, hover events, or insertion. Only t
 ## Delivery
 
 CI builds all modules. Release Please is authoritative for release versions and tags; do not create either manually. The generated release version for this adapter must be `0.2.0`; any other generated version blocks delivery until its versioning cause is resolved outside the generated release PR. Tagged releases publish the Maven artifacts through the repository’s GitHub Packages workflow. Local consumers can smoke-test an unreleased build with `./gradlew publishToMavenLocal -PversionOverride=0.2.0-SNAPSHOT` and `mavenLocal()`; publishing is never performed by the normal build.
+
+## Optional NPC renderer integration (local candidate)
+
+`scene-npc-minestom` composes the standalone `npc-core` / `npc-minestom` library
+with Scene's activation and interaction runtime. The host supplies decoded,
+catalogue-validated models through `SceneNpcModelSource`; Scene owns logical
+colliders, triggers and element generations. The NPC library owns render entities.
+Product content loading and catalogue rules stay in the host.
+
+The optional `ScopedSceneAssetRendererFactory` receives a `SceneRendererLifetime`
+that remains valid from pending creation through active removal. It supports
+atomic guarded publication and invalidation callbacks. `trackCleanup` registers
+disposal ownership before a renderer has delivered a handle. A factory which
+never produces a handle can therefore still fail the runtime drain when cleanup
+fails. `AsyncRenderedAssetHandle.closeAsync` joins active cleanup into the same
+drain; failed installation waits for rollback before returning its failure result.
+Existing factories and `SceneAssetRenderContext` constructors are unchanged.
+
+These integration artifacts currently use a local review repository and the
+candidate version `0.4.6-npc-SNAPSHOT`. Public release and client/private-payload
+acceptance are separate gates. No published release is implied by this section.

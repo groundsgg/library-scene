@@ -302,3 +302,13 @@ METHOD gg.grounds.scene.minestom.SceneViewerVisualState.getScaleMultiplier():dou
 METHOD gg.grounds.scene.minestom.SceneViewerVisualState.getScaleTransition():gg.grounds.scene.minestom.SceneViewerScaleTransition throws=
 METHOD gg.grounds.scene.minestom.SceneViewerVisualState.hashCode():int throws=
 METHOD gg.grounds.scene.minestom.SceneViewerVisualState.toString():java.lang.String throws=
+CLASS gg.grounds.scene.minestom.AsyncRenderedAssetHandle:- interfaces=gg.grounds.scene.minestom.RenderedAssetHandle
+METHOD gg.grounds.scene.minestom.AsyncRenderedAssetHandle.closeAsync():java.util.concurrent.CompletionStage<java.lang.Void> throws=
+CLASS gg.grounds.scene.minestom.ScopedSceneAssetRendererFactory:- interfaces=gg.grounds.scene.minestom.SceneAssetRendererFactory
+METHOD gg.grounds.scene.minestom.ScopedSceneAssetRendererFactory.createScoped(gg.grounds.scene.minestom.SceneAssetRenderContext,gg.grounds.scene.minestom.SceneRendererLifetime):java.util.concurrent.CompletionStage<gg.grounds.scene.minestom.RenderedAssetHandle> throws=
+CLASS gg.grounds.scene.minestom.SceneRendererLifetime:- interfaces=
+METHOD gg.grounds.scene.minestom.SceneRendererLifetime.isCurrent():boolean throws=
+METHOD gg.grounds.scene.minestom.SceneRendererLifetime.runIfCurrent(java.lang.Runnable):boolean throws=
+METHOD gg.grounds.scene.minestom.SceneRendererLifetime.onInvalidated(java.lang.Runnable):java.lang.AutoCloseable throws=
+METHOD gg.grounds.scene.minestom.SceneRendererLifetime.reportFailure(java.lang.Throwable):void throws=
+METHOD gg.grounds.scene.minestom.SceneRendererLifetime.trackCleanup(java.util.concurrent.CompletionStage<java.lang.Void>):void throws=

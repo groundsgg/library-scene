@@ -4,6 +4,7 @@ import gg.grounds.scene.format.LocalId
 import gg.grounds.scene.format.Npc
 import gg.grounds.scene.format.NpcCollisionMode
 import gg.grounds.scene.interaction.SceneBoundsRaycaster
+import gg.grounds.scene.minestom.AsyncRenderedAssetHandle
 import gg.grounds.scene.minestom.RenderedAssetHandle
 import gg.grounds.scene.minestom.SceneRenderTransform
 import gg.grounds.scene.minestom.internal.collision.requireSupportedCollisionGeometry
@@ -35,6 +36,7 @@ internal class ActiveElement(
     private val runtimeClosing: () -> Boolean = { false },
     private val schedule: (Runnable) -> Unit = Runnable::run,
     private val colliderChanged: (ActiveElement) -> Unit = {},
+    private val invalidateRendererLifetime: () -> Throwable? = { null },
 ) : AutoCloseable {
     private var runtimeTransform: SceneRenderTransform? = initialTransform
     private var preparedBoundsTransform: SceneRenderTransform? = null
@@ -190,7 +192,14 @@ internal class ActiveElement(
 
     override fun close() {
         closed.set(true)
-        closeOwnedResources(npcEntities, handles)?.let { throw it }
+        closeOwnedResources(
+                npcEntities,
+                handles,
+                invalidateRendererLifetime(),
+                beginResourceOperation,
+                { error -> completeResourceOperation(error, error != null) },
+            )
+            ?.let { throw it }
     }
 }
 
@@ -205,6 +214,8 @@ internal fun closeOwnedResources(
     npcEntities: NpcPlatformEntities?,
     handles: List<RenderedAssetHandle>,
     primaryFailure: Throwable? = null,
+    beginAsyncCleanup: () -> Unit = {},
+    completeAsyncCleanup: (Throwable?) -> Unit = {},
 ): Throwable? {
     var failure = primaryFailure
 
@@ -219,6 +230,20 @@ internal fun closeOwnedResources(
     }
 
     npcEntities?.let { attempt(it::close) }
-    handles.asReversed().forEach { handle -> attempt(handle::close) }
+    handles.asReversed().forEach { handle ->
+        if (handle is AsyncRenderedAssetHandle) {
+            beginAsyncCleanup()
+            try {
+                handle.closeAsync().whenComplete { _, error ->
+                    completeAsyncCleanup(
+                        (error as? java.util.concurrent.CompletionException)?.cause ?: error
+                    )
+                }
+            } catch (error: Throwable) {
+                completeAsyncCleanup(error)
+                attempt { throw error }
+            }
+        } else attempt(handle::close)
+    }
     return failure
 }

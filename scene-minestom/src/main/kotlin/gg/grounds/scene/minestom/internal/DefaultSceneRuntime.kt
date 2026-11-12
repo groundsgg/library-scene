@@ -106,6 +106,13 @@ private constructor(
                 request.clock,
                 ::marshal,
                 { active -> collisionController.colliderChanged(active) },
+                { elementId, error ->
+                    if (!closed) {
+                        logFailure("RENDERER_COMMAND_FAILED", elementId, null, error)
+                        deactivate(elementId)
+                        spatial.markFailed(elementId)
+                    }
+                },
             )
         collisionController =
             NpcCollisionController(
@@ -194,9 +201,10 @@ private constructor(
             )
         val activation =
             activator.beginActivation(state) {
-                // No owner continuation was accepted. Only publish the thread-safe terminal
-                // result; owner-confined runtime state and resources must remain untouched.
-                creation.complete(unscheduledFailure)
+                // Scope invalidation is thread-safe even when the owner is unavailable.
+                // Do not dispose legacy owner-confined handles on this foreign thread.
+                preparedAlwaysSnapshot().forEach { it.activation.invalidateRenderers() }
+                completeFailedCreation(unscheduledFailure.problems)
             }
         val stage = activation.stage
         try {
@@ -207,12 +215,10 @@ private constructor(
                         activation.abort()?.let(failure::addSuppressedDistinct)
                         abortPreparedAlways(failure)
                         logFailure("CONTINUATION_SCHEDULE_FAILED", elementId, null, failure)
-                        creation.complete(
-                            SceneRuntimeCreationResult.Failure(
-                                listOf(
-                                    runtimeProblem(
-                                        "Runtime installation continuation could not be scheduled."
-                                    )
+                        completeFailedCreation(
+                            listOf(
+                                runtimeProblem(
+                                    "Runtime installation continuation could not be scheduled."
                                 )
                             )
                         )
@@ -329,6 +335,7 @@ private constructor(
     }
 
     private fun failInstallation(elementId: LocalId?, error: Throwable? = null) {
+        closed = true
         var failure = abortPreparedAlways(error)
         task?.cancel()
         task = null
@@ -358,7 +365,56 @@ private constructor(
                 it,
             )
         }
-        creation.complete(SceneRuntimeCreationResult.Failure(listOf(problem)))
+        completeFailedCreation(listOf(problem))
+    }
+
+    private fun completeFailedCreation(problems: List<SceneRuntimeProblem>) {
+        fun diagnostic(message: String) =
+            problems.mapIndexed { index, problem ->
+                if (index == 0) problem.copy(message = problem.message + " " + message) else problem
+            }
+        try {
+            activator.beginCloseDrain().whenComplete { outcome, error ->
+                val cleanupFailure = error?.unwrap() ?: outcome?.first
+                try {
+                    marshal(
+                        Runnable {
+                            if (cleanupFailure != null)
+                                logFailure(
+                                    "INSTALLATION_ROLLBACK_FAILED",
+                                    null,
+                                    null,
+                                    cleanupFailure,
+                                )
+                            val result =
+                                if (cleanupFailure == null) problems
+                                else
+                                    diagnostic(
+                                        "Runtime installation rollback failed: ${cleanupFailure.message}"
+                                    )
+                            creation.complete(SceneRuntimeCreationResult.Failure(result))
+                        }
+                    )
+                } catch (scheduleError: Throwable) {
+                    // Cleanup has drained; only publish the thread-safe failure result when
+                    // its final owner continuation cannot be accepted.
+                    creation.complete(
+                        SceneRuntimeCreationResult.Failure(
+                            diagnostic(
+                                "Rollback completion could not be scheduled: ${scheduleError.message}; cleanup: ${cleanupFailure?.message ?: "completed"}"
+                            )
+                        )
+                    )
+                }
+            }
+        } catch (error: Throwable) {
+            logFailure("INSTALLATION_ROLLBACK_FAILED", null, null, error)
+            creation.complete(
+                SceneRuntimeCreationResult.Failure(
+                    diagnostic("Runtime installation rollback could not be drained.")
+                )
+            )
+        }
     }
 
     private fun tick() {
@@ -749,7 +805,6 @@ private constructor(
         }
         closed = true
         collisions.close()
-        val drain = activator.beginCloseDrain()
         runtimeGeneration++
         logicalStates.values.forEach { it.generation++ }
         task?.cancel()
@@ -777,7 +832,8 @@ private constructor(
                     logFailure("ELEMENT_CLOSE_FAILED", elementId, null, error)
                 }
             }
-        continueCloseAfterDrain(drain, completion)
+        // All active cleanup stages must be registered before sealing an otherwise empty drain.
+        continueCloseAfterDrain(activator.beginCloseDrain(), completion)
     }
 
     private fun continueCloseAfterDrain(

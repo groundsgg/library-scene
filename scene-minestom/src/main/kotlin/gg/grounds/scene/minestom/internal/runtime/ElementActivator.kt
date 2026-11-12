@@ -13,6 +13,7 @@ import gg.grounds.scene.minestom.SceneAssetRenderContext
 import gg.grounds.scene.minestom.SceneAssetRendererFactory
 import gg.grounds.scene.minestom.SceneClock
 import gg.grounds.scene.minestom.SceneRenderTransform
+import gg.grounds.scene.minestom.ScopedSceneAssetRendererFactory
 import gg.grounds.scene.minestom.internal.RendererCapabilityKey
 import gg.grounds.scene.minestom.internal.collision.requireSupportedCollisionGeometry
 import gg.grounds.scene.minestom.internal.elapsedNanos
@@ -38,6 +39,9 @@ internal interface ElementActivation {
     fun claim(active: ActiveElement): Boolean
 
     fun abort(): Throwable?
+
+    /** Thread-safe invalidation only; legacy owner-confined resource disposal is unchanged. */
+    fun invalidateRenderers(): Throwable?
 }
 
 internal class ElementActivator(
@@ -46,11 +50,25 @@ internal class ElementActivator(
     private val clock: SceneClock,
     private val schedule: (Runnable) -> Unit = Runnable::run,
     private val colliderChanged: (ActiveElement) -> Unit = {},
+    private val rendererFailure: (LocalId, Throwable) -> Unit = { _, _ -> },
 ) {
     private val interactionIds = mutableMapOf<UUID, LocalId>()
     private val resourceDrain = ResourceDrain()
 
     fun beginCloseDrain(): CompletionStage<Pair<Throwable?, Boolean>> = resourceDrain.beginClose()
+
+    private fun closeOwnedResources(
+        npc: NpcPlatformEntities?,
+        handles: List<RenderedAssetHandle>,
+        failure: Throwable? = null,
+    ): Throwable? =
+        gg.grounds.scene.minestom.internal.runtime.closeOwnedResources(
+            npc,
+            handles,
+            failure,
+            resourceDrain::beginOperation,
+            { error -> resourceDrain.completeOperation(error, closeMustFail = error != null) },
+        )
 
     fun activate(state: LogicalElementState): CompletionStage<ActiveElement> =
         startActivation(state, false, null).stage
@@ -127,7 +145,11 @@ internal class ElementActivator(
                         ) {
                             "No renderer is available for ${request.context.asset.value}."
                         }
-                    requireNotNull(factory.create(request.context)) {
+                    requireNotNull(
+                        if (factory is ScopedSceneAssetRendererFactory)
+                            factory.createScoped(request.context, activation.lifetime)
+                        else factory.create(request.context)
+                    ) {
                         "Renderer factory returned a null CompletionStage."
                     }
                 } catch (error: Throwable) {
@@ -335,6 +357,28 @@ internal class ElementActivator(
         override val stage: CompletionStage<ActiveElement>
             get() = future
 
+        val lifetime: RendererLifetime =
+            RendererLifetime(
+                { state.generation == generation && !resourceDrain.isClosing() },
+                { error ->
+                    try {
+                        schedule(
+                            Runnable {
+                                if (!lifetime.isCurrent()) return@Runnable
+                                if (!isOpen()) rendererFailure(state.element.id, error)
+                                else failed(error)
+                            }
+                        )
+                    } catch (scheduleError: Throwable) {
+                        resourceDrain.beginOperation()
+                        resourceDrain.completeOperation(
+                            error.withSuppressed(scheduleError),
+                            closeMustFail = true,
+                        )
+                    }
+                },
+                resourceDrain::trackCleanup,
+            )
         private var pending: Int = requests.size
         private val handles = arrayOfNulls<RenderedAssetHandle>(requests.size)
         private var npc: NpcPlatformEntities? = null
@@ -388,7 +432,13 @@ internal class ElementActivator(
             terminalFailure?.let { failure -> if (error !== failure) failure.addSuppressed(error) }
         }
 
-        fun isOpen(): Boolean = synchronized(this) { !terminal }
+        fun isOpen(): Boolean = synchronized(this) { !terminal && lifetime.isCurrent() }
+
+        override fun invalidateRenderers(): Throwable? =
+            lifetime.invalidate().also { failure ->
+                if (failure != null)
+                    resourceDrain.trackCleanup(CompletableFuture.failedFuture<Void>(failure))
+            }
 
         fun attach(platformEntities: NpcPlatformEntities): Boolean =
             synchronized(this) {
@@ -438,6 +488,7 @@ internal class ElementActivator(
                     }
                 )
             } catch (scheduleError: Throwable) {
+                invalidateRenderers()?.let { failure.withSuppressed(it) }
                 unrecoverable(failure.withSuppressed(scheduleError))
             }
         }
@@ -461,11 +512,17 @@ internal class ElementActivator(
                 published?.let { active ->
                     published = null
                     active.npcEntities?.interaction?.uuid?.let(interactionIds::remove)
-                    return@synchronized closeOwnedResources(active.npcEntities, active.handles)
+                    return@synchronized try {
+                        active.close()
+                        null
+                    } catch (error: Throwable) {
+                        error
+                    }
                 }
                 if (terminal) return@synchronized null
                 val cancellation = CancellationException("Element activation was aborted.")
                 terminal = true
+                invalidateRenderers()?.let { cancellation.withSuppressed(it) }
                 val closeNpcNow = npcAttachmentStagesSettled()
                 npcCleanupDeferred = !closeNpcNow && npc != null
                 terminalFailure =
@@ -485,6 +542,7 @@ internal class ElementActivator(
 
         private fun failLocked(error: Throwable) {
             terminal = true
+            invalidateRenderers()?.let { error.withSuppressed(it) }
             val closeNpcNow = npcAttachmentStagesSettled()
             npcCleanupDeferred = !closeNpcNow && npc != null
             terminalFailure =
@@ -500,9 +558,10 @@ internal class ElementActivator(
         private fun publishOrClose() {
             if (terminal) return
             val completedHandles = handles.map { requireNotNull(it) }
-            if (state.generation != generation) {
+            if (state.generation != generation || !lifetime.isCurrent()) {
                 terminal = true
                 val error = IllegalStateException("Activation generation is stale.")
+                invalidateRenderers()?.let { error.withSuppressed(it) }
                 terminalFailure = closeOwnedResources(npc, completedHandles, error) ?: error
                 future.completeExceptionally(terminalFailure)
                 return
@@ -539,6 +598,7 @@ internal class ElementActivator(
                     resourceDrain::isClosing,
                     schedule,
                     colliderChanged,
+                    ::invalidateRenderers,
                 )
             if (retainUntilClaimed) published = active
             future.complete(active)
@@ -552,6 +612,29 @@ internal class ElementActivator(
         private var closeMustFail = false
 
         fun beginOperation() = synchronized(this) { operations++ }
+
+        fun trackCleanup(stage: CompletionStage<Void>) {
+            // Keep registration itself owned: an inline completion must not seal the drain
+            // before a malformed registration has had a chance to report its failure.
+            beginOperation()
+            beginOperation()
+            val settled = java.util.concurrent.atomic.AtomicBoolean()
+            try {
+                stage.whenComplete { _, error ->
+                    if (settled.compareAndSet(false, true))
+                        completeOperation(error?.unwrap(), closeMustFail = error != null)
+                }
+            } catch (error: Throwable) {
+                if (settled.compareAndSet(false, true))
+                    completeOperation(error, closeMustFail = true)
+                else {
+                    beginOperation()
+                    completeOperation(error, closeMustFail = true)
+                }
+            } finally {
+                completeOperation()
+            }
+        }
 
         private var failure: Throwable? = null
 

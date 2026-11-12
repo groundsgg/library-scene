@@ -82,3 +82,32 @@ interface HeadLookRenderedAssetHandle : RenderedAssetHandle {
     /** Head rotation relative to the body's current orientation, additive to animation. */
     fun applyHeadLook(yawDegrees: Double, pitchDegrees: Double)
 }
+
+/** Optional factory contract; legacy factories and context constructors remain supported. */
+interface ScopedSceneAssetRendererFactory : SceneAssetRendererFactory {
+    fun createScoped(
+        context: SceneAssetRenderContext,
+        lifetime: SceneRendererLifetime,
+    ): CompletionStage<RenderedAssetHandle>
+}
+
+/** One element generation, retained from pending creation through active removal. */
+interface SceneRendererLifetime {
+    fun isCurrent(): Boolean
+
+    fun runIfCurrent(operation: Runnable): Boolean
+
+    fun onInvalidated(callback: Runnable): AutoCloseable
+
+    fun reportFailure(failure: Throwable)
+
+    /**
+     * Own cleanup even if a cancelled factory never delivers a handle. Register before delivery.
+     */
+    fun trackCleanup(cleanup: CompletionStage<Void>)
+}
+
+/** Optional ownership contract: Scene joins cleanup into its resource drain. */
+interface AsyncRenderedAssetHandle : RenderedAssetHandle {
+    fun closeAsync(): CompletionStage<Void>
+}
