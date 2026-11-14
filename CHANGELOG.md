@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/groundsgg/library-scene/compare/v0.5.0...v0.5.1) (2026-11-14)
+
+
+### Documentation
+
+* document Scene 0.5.0 NPC integration ([ae8005e](https://github.com/groundsgg/library-scene/commit/ae8005eb4729b342072710d740a7caccd3caf2fe))
+
 ## [0.5.0](https://github.com/groundsgg/library-scene/compare/v0.4.5...v0.5.0) (2026-11-14)
 
 
