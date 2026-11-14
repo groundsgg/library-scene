@@ -1,12 +1,12 @@
 # library-scene
 
-`library-scene` is the platform-neutral, strict JSON interchange format for Grounds scenes. Version `0.1.0` publishes exactly two artifacts:
+`library-scene` provides the strict, platform-neutral JSON format for Grounds scenes and optional runtime adapters. Version `0.5.0` publishes `scene-format`, `scene-testkit`, `scene-interaction`, `scene-minestom`, and `scene-npc-minestom`. Choose the modules needed by the host:
 
 ```kotlin
 dependencies {
-    implementation("gg.grounds:scene-format:0.1.0")
+    implementation("gg.grounds:scene-format:0.5.0")
     // Tests only; never an application runtime dependency.
-    testImplementation("gg.grounds:scene-testkit:0.1.0")
+    testImplementation("gg.grounds:scene-testkit:0.5.0")
 }
 ```
 
@@ -77,7 +77,7 @@ Minestom hosts use the runtime adapter at the expected Release Please version `0
 
 ```kotlin
 dependencies {
-    implementation("gg.grounds:scene-minestom:0.2.0")
+    implementation("gg.grounds:scene-minestom:0.5.0")
 }
 ```
 
@@ -127,6 +127,14 @@ CI builds all modules. Release Please is authoritative for release versions and 
 
 ## Optional NPC renderer integration
 
+Minestom hosts can add the optional adapter directly:
+
+```kotlin
+dependencies {
+    implementation("gg.grounds:scene-npc-minestom:0.5.0")
+}
+```
+
 `scene-npc-minestom` composes the standalone `npc-core` / `npc-minestom` library
 with Scene's activation and interaction runtime. The host supplies decoded,
 catalogue-validated models through `SceneNpcModelSource`; Scene owns logical
@@ -146,9 +154,9 @@ The adapter consumes `gg.grounds:npc-minestom:0.2.0` from
 `groundsgg/library-npc` on GitHub Packages. That library is independently built,
 MIT-licensed and does not depend on Scene. Source builds for the adapter need
 the normal GitHub Packages read credentials; the NPC library itself does not.
-Release Please determines the next Scene release from the current manifest;
-local `0.4.6-npc-SNAPSHOT` artifacts remain integration candidates only.
-Private-content, two-player and transfer acceptance remain separate product gates.
+Scene `0.5.0` includes this adapter and the optional personal presentation capability.
+The adapter dependency is the published NPC `0.2.0` release. Licensed product
+content and actual backend/proxy transfer acceptance remain separate product gates.
 
 
 The NPC adapter additionally implements the optional
@@ -164,3 +172,8 @@ The default adapter dependency is the published NPC0.2.0 release. Review-only
 normal builds and CI require no candidate override. Neutral two-client private
 rendering, sound and common restoration have been confirmed on Grounds26.3.
 Licensed product content and actual backend/proxy transfers remain separate gates.
+
+
+The independent release consumer is checked with Java 25 and Kotlin 2.4.0 using
+Maven artifacts, without a composite build. It exercises the Java presentation
+API, scoped factory, private A/common B visibility, playback and owned cleanup.
