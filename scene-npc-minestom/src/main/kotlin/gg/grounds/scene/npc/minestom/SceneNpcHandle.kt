@@ -1,9 +1,11 @@
 package gg.grounds.scene.npc.minestom
 
 import gg.grounds.npc.core.NpcModel
+import gg.grounds.npc.core.NpcProblem
 import gg.grounds.npc.minestom.*
 import gg.grounds.scene.format.LocalId
 import gg.grounds.scene.minestom.*
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.CompletionStage
 import net.minestom.server.entity.Player
@@ -16,7 +18,29 @@ internal class SceneNpcHandle(
     private val lifetime: SceneRendererLifetime,
     private val registration: AutoCloseable,
     private val instance: Instance,
-) : HeadLookRenderedAssetHandle, AsyncRenderedAssetHandle {
+) : HeadLookRenderedAssetHandle, AsyncRenderedAssetHandle, PersonalNpcRenderedAssetHandle {
+    override fun preparePresentation(options: NpcPresentationOptions): NpcPresentationStart {
+        if (!lifetime.isCurrent())
+            return object : NpcPresentationStart {
+                override fun ready(): CompletionStage<NpcPresentationResult> =
+                    CompletableFuture.completedFuture(
+                        NpcPresentationResult.Rejected(
+                            listOf(
+                                NpcProblem(
+                                    "NPC_PRESENTATION_PARENT_GONE",
+                                    "$",
+                                    "Scene renderer generation is no longer current",
+                                )
+                            )
+                        )
+                    )
+
+                override fun cancel(): CompletionStage<Void> =
+                    CompletableFuture.completedFuture(null)
+            }
+        return NpcPresentations.prepare(npc, options)
+    }
+
     override val headLookOrigin
         get() = npc.snapshot().lookOrigin?.let(SceneNpcTransformMapper::toScene)
 
