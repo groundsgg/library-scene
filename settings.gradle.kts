@@ -17,3 +17,5 @@ include("scene-format")
 include("scene-testkit")
 include("scene-minestom")
 include("scene-interaction")
+
+include("scene-npc-minestom")

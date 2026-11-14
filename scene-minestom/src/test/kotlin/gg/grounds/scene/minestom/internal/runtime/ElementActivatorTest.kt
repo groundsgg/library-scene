@@ -26,6 +26,172 @@ import net.minestom.server.world.DimensionType
 
 class ElementActivatorTest {
     @Test
+    fun `pending start cleanup failure before runtime close remains owned by drain`() =
+        assertPendingCleanup(false)
+
+    @Test
+    fun `pending start cleanup failure during runtime close prevents successful drain`() =
+        assertPendingCleanup(true)
+
+    private fun assertPendingCleanup(closeFirst: Boolean) {
+        val cleanup = CompletableFuture<Void>()
+        val creating = CompletableFuture<RenderedAssetHandle>()
+        val failure = IllegalStateException("Pending start cleanup failed")
+        val factory =
+            object : ScopedSceneAssetRendererFactory {
+                override fun create(
+                    context: SceneAssetRenderContext
+                ): CompletionStage<RenderedAssetHandle> = error("Legacy path")
+
+                override fun createScoped(
+                    context: SceneAssetRenderContext,
+                    lifetime: SceneRendererLifetime,
+                ): CompletionStage<RenderedAssetHandle> {
+                    lifetime.trackCleanup(cleanup)
+                    lifetime.onInvalidated(
+                        Runnable {
+                            cleanup.whenComplete { _, error ->
+                                creating.completeExceptionally(
+                                    java.util.concurrent
+                                        .CancellationException("Start cancelled")
+                                        .also { if (error != null) it.addSuppressed(error) }
+                                )
+                            }
+                        }
+                    )
+                    return creating
+                }
+            }
+        val owner = activator(SceneAssetRendererRegistry { _, _ -> factory })
+        val pending = owner.beginActivation(state(prop()))
+        pending.abort()
+        val drain = if (closeFirst) owner.beginCloseDrain().toCompletableFuture() else null
+        if (drain != null) assertTrue(!drain.isDone)
+        cleanup.completeExceptionally(failure)
+        val outcome = (drain ?: owner.beginCloseDrain().toCompletableFuture()).get()
+        assertTrue(
+            outcome.second,
+            "Pending start cleanup failure must prevent a successful runtime close",
+        )
+        assertTrue(outcome.first != null)
+    }
+
+    @Test
+    fun `queued renderer failure cannot target an invalidated replacement generation`() {
+        val queue = ConcurrentLinkedQueue<Runnable>()
+        val scopes = mutableListOf<SceneRendererLifetime>()
+        var failures = 0
+        val factory =
+            object : ScopedSceneAssetRendererFactory {
+                override fun create(
+                    context: SceneAssetRenderContext
+                ): CompletionStage<RenderedAssetHandle> = error("Legacy path")
+
+                override fun createScoped(
+                    context: SceneAssetRenderContext,
+                    lifetime: SceneRendererLifetime,
+                ): CompletionStage<RenderedAssetHandle> {
+                    scopes += lifetime
+                    return CompletableFuture.completedFuture(RecordingHandle("test:prop"))
+                }
+            }
+        val owner =
+            activator(
+                SceneAssetRendererRegistry { _, _ -> factory },
+                schedule = { queue += it },
+                rendererFailure = { _, _ -> failures++ },
+            )
+        val logical = state(prop())
+        val first = owner.activate(logical)
+        while (queue.isNotEmpty()) queue.remove().run()
+        val old = first.await()
+        scopes[0].reportFailure(IllegalStateException("Old async command failed"))
+        val delayed = queue.remove()
+        logical.generation++
+        owner.deactivate(old)
+        val next = owner.activate(logical)
+        while (queue.isNotEmpty()) queue.remove().run()
+        next.await()
+        delayed.run()
+        assertEquals(0, failures, "A stale command failure must not affect the replacement")
+        assertTrue(scopes[1].isCurrent())
+    }
+
+    @Test
+    fun `scoped factory survives delivery then invalidates and drains asynchronous close`() {
+        val cleanup = CompletableFuture<Void>()
+        val handle =
+            object : AsyncRenderedAssetHandle, RenderedAssetHandle by RecordingHandle("test:prop") {
+                override fun closeAsync(): CompletionStage<Void> = cleanup
+            }
+        lateinit var lifetime: SceneRendererLifetime
+        var invalidations = 0
+        val factory =
+            object : ScopedSceneAssetRendererFactory {
+                override fun create(
+                    context: SceneAssetRenderContext
+                ): CompletionStage<RenderedAssetHandle> = error("Legacy factory path used")
+
+                override fun createScoped(
+                    context: SceneAssetRenderContext,
+                    scope: SceneRendererLifetime,
+                ): CompletionStage<RenderedAssetHandle> {
+                    lifetime = scope
+                    scope.onInvalidated(Runnable { invalidations++ })
+                    return CompletableFuture.completedFuture(handle)
+                }
+            }
+        val owner = activator(SceneAssetRendererRegistry { _, _ -> factory })
+        val active = owner.activate(state(prop())).await()
+        assertTrue(lifetime.isCurrent())
+        assertTrue(lifetime.runIfCurrent(Runnable {}))
+        owner.deactivate(active)
+        assertTrue(!lifetime.isCurrent())
+        assertEquals(1, invalidations)
+        assertTrue(!lifetime.runIfCurrent(Runnable { error("Invalid lifetime published") }))
+        val drain = owner.beginCloseDrain().toCompletableFuture()
+        assertTrue(!drain.isDone)
+        cleanup.complete(null)
+        assertEquals(null to false, drain.get())
+    }
+
+    @Test
+    fun `aborted scoped start invalidates before late delivery and waits for failed cleanup`() {
+        val delivered = CompletableFuture<RenderedAssetHandle>()
+        val cleanup = CompletableFuture<Void>()
+        lateinit var lifetime: SceneRendererLifetime
+        val factory =
+            object : ScopedSceneAssetRendererFactory {
+                override fun create(
+                    context: SceneAssetRenderContext
+                ): CompletionStage<RenderedAssetHandle> = error("Legacy factory path used")
+
+                override fun createScoped(
+                    context: SceneAssetRenderContext,
+                    scope: SceneRendererLifetime,
+                ): CompletionStage<RenderedAssetHandle> {
+                    lifetime = scope
+                    return delivered
+                }
+            }
+        val owner = activator(SceneAssetRendererRegistry { _, _ -> factory })
+        val pending = owner.beginActivation(state(prop()))
+        pending.abort()
+        assertTrue(!lifetime.isCurrent())
+        val drain = owner.beginCloseDrain().toCompletableFuture()
+        delivered.complete(
+            object : AsyncRenderedAssetHandle, RenderedAssetHandle by RecordingHandle("test:prop") {
+                override fun closeAsync(): CompletionStage<Void> = cleanup
+            }
+        )
+        assertTrue(!drain.isDone)
+        val failure = IllegalStateException("async cleanup failed")
+        cleanup.completeExceptionally(failure)
+        assertSame(failure, drain.get().first)
+        assertTrue(drain.get().second)
+    }
+
+    @Test
     fun `activates a prop with its root transform and resumes its logical animation`() {
         val factory = RecordingFactory()
         val state =
@@ -476,6 +642,7 @@ class ElementActivatorTest {
         renderers: SceneAssetRendererRegistry,
         instance: Instance = instance(),
         schedule: (Runnable) -> Unit = Runnable::run,
+        rendererFailure: (LocalId, Throwable) -> Unit = { _, _ -> },
     ) =
         ElementActivator(
             instance,
@@ -490,6 +657,7 @@ class ElementActivatorTest {
             },
             TestClock(5_000_000L),
             schedule,
+            rendererFailure = rendererFailure,
         )
 
     private fun instance(): Instance {

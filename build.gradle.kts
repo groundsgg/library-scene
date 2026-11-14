@@ -29,6 +29,7 @@ subprojects {
     tasks.withType<KotlinCompile>().configureEach { compilerOptions.jvmTarget.set(JvmTarget.JVM_25) }
 
     repositories {
+        providers.gradleProperty("npcRepository").orNull?.let { maven { url = uri(it) } }
         mavenCentral()
         maven {
             url = uri("https://maven.pkg.github.com/groundsgg/*")
@@ -56,6 +57,15 @@ subprojects {
                     password = System.getenv("GITHUB_TOKEN")
                 }
             }
+        }
+    }
+}
+
+// Explicit review-only Maven destination for cross-repository candidate checks.
+providers.gradleProperty("npcReviewRepository").orNull?.let { location ->
+    subprojects {
+        extensions.configure<PublishingExtension> {
+            repositories { maven { name = "Review"; url = uri(location) } }
         }
     }
 }
