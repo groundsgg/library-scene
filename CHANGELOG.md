@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/groundsgg/library-scene/compare/v0.4.5...v0.5.0) (2026-11-14)
+
+
+### Features
+
+* add optional shared NPC renderer adapter ([79a0380](https://github.com/groundsgg/library-scene/commit/79a03806fb67fbc0728085541b50205e8c794fa8))
+* expose personal NPC presentations on Scene handles ([40ab073](https://github.com/groundsgg/library-scene/commit/40ab073aa24ee35cdcaa664e0327ab3922551094))
+
+
+### Performance Improvements
+
+* **scene:** reuse unchanged NPC world bounds ([#28](https://github.com/groundsgg/library-scene/issues/28)) ([a0a815c](https://github.com/groundsgg/library-scene/commit/a0a815c55e13bfddbee051d24cc85e4864da85c8))
+
 ## [0.4.5](https://github.com/groundsgg/library-scene/compare/v0.4.4...v0.4.5) (2026-11-05)
 
 
