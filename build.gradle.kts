@@ -29,7 +29,13 @@ subprojects {
     tasks.withType<KotlinCompile>().configureEach { compilerOptions.jvmTarget.set(JvmTarget.JVM_25) }
 
     repositories {
-        providers.gradleProperty("npcRepository").orNull?.let { maven { url = uri(it) } }
+        providers.gradleProperty("npcRepository").orNull?.let { location ->
+            val npcArtifacts = maven { name = "NpcReview"; url = uri(location) }
+            exclusiveContent {
+                forRepositories(npcArtifacts)
+                filter { includeModule("gg.grounds", "npc-core"); includeModule("gg.grounds", "npc-minestom") }
+            }
+        }
         mavenCentral()
         maven {
             url = uri("https://maven.pkg.github.com/groundsgg/*")

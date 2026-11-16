@@ -1,7 +1,17 @@
 package gg.grounds.scene.npc.minestom
 
-import gg.grounds.npc.core.*
+import gg.grounds.npc.core.animation.NpcClip
+import gg.grounds.npc.core.animation.NpcLoopMode
+import gg.grounds.npc.core.math.NpcVector3
+import gg.grounds.npc.core.model.NpcBounds
+import gg.grounds.npc.core.model.NpcModel
+import gg.grounds.npc.core.model.NpcPart
 import gg.grounds.npc.minestom.*
+import gg.grounds.npc.minestom.presentation.NpcPresentationOptions
+import gg.grounds.npc.minestom.presentation.NpcPresentationPhase
+import gg.grounds.npc.minestom.presentation.NpcPresentationResult
+import gg.grounds.npc.minestom.spi.NpcMeshResolver
+import gg.grounds.npc.minestom.spi.NpcMonotonicClock
 import gg.grounds.scene.format.*
 import gg.grounds.scene.minestom.*
 import java.net.InetSocketAddress
@@ -27,7 +37,7 @@ class PersonalNpcSceneTest {
         val a = fixture.player()
         fixture.player()
         val handle = assertIs<PersonalNpcRenderedAssetHandle>(fixture.create())
-        val start = handle.preparePresentation(NpcPresentationOptions(a))
+        val start = handle.preparePresentation(NpcPresentationOptions.builder(a).build())
         val personal = assertIs<NpcPresentationResult.Ready>(fixture.await(start.ready())).handle
         fixture.await(personal.publish())
         assertEquals(
@@ -40,7 +50,9 @@ class PersonalNpcSceneTest {
         assertTrue(fixture.scope.failures.isEmpty())
         val foreign = Fixture().player()
         assertIs<NpcPresentationResult.Rejected>(
-            fixture.await(handle.preparePresentation(NpcPresentationOptions(foreign)).ready())
+            fixture.await(
+                handle.preparePresentation(NpcPresentationOptions.builder(foreign).build()).ready()
+            )
         )
         fixture.scope.invalidate()
         fixture.scope.cleanup.single().toCompletableFuture().get(1, TimeUnit.SECONDS)
@@ -51,7 +63,9 @@ class PersonalNpcSceneTest {
             }
         )
         assertIs<NpcPresentationResult.Rejected>(
-            fixture.await(handle.preparePresentation(NpcPresentationOptions(a)).ready())
+            fixture.await(
+                handle.preparePresentation(NpcPresentationOptions.builder(a).build()).ready()
+            )
         )
     }
 
@@ -73,7 +87,7 @@ class PersonalNpcSceneTest {
         val a = fixture.player()
         val handle = assertIs<PersonalNpcRenderedAssetHandle>(fixture.create())
         block.set(true)
-        val start = handle.preparePresentation(NpcPresentationOptions(a))
+        val start = handle.preparePresentation(NpcPresentationOptions.builder(a).build())
         val executor = Executors.newSingleThreadExecutor()
         try {
             val tick = executor.submit { fixture.instance.tick(0) }
@@ -106,14 +120,14 @@ class PersonalNpcSceneTest {
                     fixture.await(
                         handle
                             .preparePresentation(
-                                NpcPresentationOptions(
-                                    a,
-                                    clock =
+                                NpcPresentationOptions.builder(a)
+                                    .clock(
                                         NpcMonotonicClock {
                                             if (fail.get()) error("clock failed")
                                             else 10_000_000_000
-                                        },
-                                )
+                                        }
+                                    )
+                                    .build()
                             )
                             .ready()
                     )
@@ -249,7 +263,7 @@ class PersonalNpcSceneTest {
                         NpcVector3.ZERO,
                     )
                 ),
-                mapOf("idle" to NpcClip("loop", 1.0, emptyMap())),
+                mapOf("idle" to NpcClip(NpcLoopMode.LOOP, 1.0, emptyMap())),
                 emptyMap(),
             )
     }

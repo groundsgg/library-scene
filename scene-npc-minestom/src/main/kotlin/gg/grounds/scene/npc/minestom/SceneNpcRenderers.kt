@@ -1,7 +1,14 @@
 package gg.grounds.scene.npc.minestom
 
-import gg.grounds.npc.core.NpcModel
+import gg.grounds.npc.core.model.NpcModel
 import gg.grounds.npc.minestom.*
+import gg.grounds.npc.minestom.NpcPrepareResult
+import gg.grounds.npc.minestom.NpcRenderer
+import gg.grounds.npc.minestom.NpcSpawnRequest
+import gg.grounds.npc.minestom.config.NpcRenderConfig
+import gg.grounds.npc.minestom.spi.NpcMeshResolver
+import gg.grounds.npc.minestom.spi.NpcPublicationGuard
+import gg.grounds.npc.minestom.spi.NpcSoundSink
 import gg.grounds.scene.format.*
 import gg.grounds.scene.minestom.*
 import java.util.concurrent.CancellationException
@@ -20,7 +27,7 @@ constructor(
     private val models: SceneNpcModelSource,
     private val meshes: NpcMeshResolver? = null,
     private val sounds: NpcSoundSink? = null,
-    private val config: NpcRenderConfig = NpcRenderConfig(),
+    private val config: NpcRenderConfig = NpcRenderConfig.builder().build(),
 ) : SceneAssetRendererRegistry {
     override fun rendererFor(asset: AssetKey, kind: AssetKind): SceneAssetRendererFactory? {
         if (kind != AssetKind.NPC_BODY) return null
@@ -49,19 +56,21 @@ constructor(
         ): CompletionStage<RenderedAssetHandle> {
             require(context.asset.value == model.id)
             val defaults =
-                NpcSpawnRequest(
-                    context.instance,
-                    model,
-                    SceneNpcTransformMapper.toNpc(context.transform),
-                    NpcPublicationGuard(lifetime::runIfCurrent),
-                )
+                NpcSpawnRequest.builder(
+                        context.instance,
+                        model,
+                        SceneNpcTransformMapper.toNpc(context.transform),
+                    )
+                    .publicationGuard(NpcPublicationGuard(lifetime::runIfCurrent))
+                    .build()
             val start =
                 NpcRenderer.prepare(
-                    defaults.copy(
-                        meshes = meshes ?: defaults.meshes,
-                        sounds = sounds ?: defaults.sounds,
-                        config = config,
-                    )
+                    defaults
+                        .toBuilder()
+                        .meshes(meshes ?: defaults.meshes)
+                        .sounds(sounds ?: defaults.sounds)
+                        .config(config)
+                        .build()
                 )
             val cleanup = CompletableFuture<Void>()
             lifetime.trackCleanup(cleanup)

@@ -1,8 +1,13 @@
 package gg.grounds.scene.npc.minestom
 
-import gg.grounds.npc.core.NpcModel
-import gg.grounds.npc.core.NpcProblem
+import gg.grounds.npc.core.model.NpcModel
+import gg.grounds.npc.core.validation.NpcProblem
 import gg.grounds.npc.minestom.*
+import gg.grounds.npc.minestom.NpcHandle
+import gg.grounds.npc.minestom.presentation.NpcPresentationOptions
+import gg.grounds.npc.minestom.presentation.NpcPresentationResult
+import gg.grounds.npc.minestom.presentation.NpcPresentationStart
+import gg.grounds.npc.minestom.viewer.NpcViewerState
 import gg.grounds.scene.format.LocalId
 import gg.grounds.scene.minestom.*
 import java.util.concurrent.CompletableFuture
@@ -38,7 +43,7 @@ internal class SceneNpcHandle(
                 override fun cancel(): CompletionStage<Void> =
                     CompletableFuture.completedFuture(null)
             }
-        return NpcPresentations.prepare(npc, options)
+        return npc.preparePresentation(options)
     }
 
     override val headLookOrigin
@@ -71,15 +76,15 @@ internal class SceneNpcHandle(
     override fun startAnimation(animation: LocalId, elapsedMillis: Long) {
         require(animation.value in model.animations) { "Unknown NPC clip ${animation.value}" }
         require(elapsedMillis >= 0)
-        observe(npc.startAnimation(animation.value, elapsedMillis))
+        observe(npc.playClip(animation.value, elapsedMillis))
     }
 
     override fun stopAnimation(animation: LocalId?) {
-        observe(npc.stopAnimation(animation?.value))
+        observe(if (animation == null) npc.stopClip() else npc.stopClipIfPlaying(animation.value))
     }
 
     override fun advanceAnimation(elapsedMillis: Long) {
-        observe(npc.advanceAnimation(elapsedMillis))
+        observe(npc.advanceClipTo(elapsedMillis))
     }
 
     override fun applyHeadLook(yawDegrees: Double, pitchDegrees: Double) {

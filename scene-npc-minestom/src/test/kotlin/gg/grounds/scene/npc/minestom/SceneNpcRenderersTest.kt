@@ -1,6 +1,11 @@
 package gg.grounds.scene.npc.minestom
 
-import gg.grounds.npc.core.*
+import gg.grounds.npc.core.animation.NpcClip
+import gg.grounds.npc.core.animation.NpcLoopMode
+import gg.grounds.npc.core.math.NpcVector3
+import gg.grounds.npc.core.model.NpcBounds
+import gg.grounds.npc.core.model.NpcModel
+import gg.grounds.npc.core.model.NpcPart
 import gg.grounds.scene.format.*
 import gg.grounds.scene.minestom.*
 import java.util.concurrent.TimeUnit
@@ -74,7 +79,7 @@ class SceneNpcRenderersTest {
             NpcBounds(NpcVector3.ZERO, NpcVector3.ONE),
             emptyList(),
             listOf(NpcPart(null, "test:cube", NpcVector3.ZERO, NpcVector3.ZERO, NpcVector3.ZERO)),
-            mapOf("idle" to NpcClip("loop", 1.0, emptyMap())),
+            mapOf("idle" to NpcClip(NpcLoopMode.LOOP, 1.0, emptyMap())),
             emptyMap(),
         )
 
