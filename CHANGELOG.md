@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.0](https://github.com/groundsgg/library-scene/compare/v0.5.0...v1.0.0) (2026-11-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* migrate Scene to redesigned NPC API
+
+### Documentation
+
+* document Scene 0.5.0 NPC integration ([ae8005e](https://github.com/groundsgg/library-scene/commit/ae8005eb4729b342072710d740a7caccd3caf2fe))
+
+
+### Code Refactoring
+
+* migrate Scene to redesigned NPC API ([dbde1cb](https://github.com/groundsgg/library-scene/commit/dbde1cb69a946d94cd8f227940ffdcc1cd891766))
+
 ## [0.5.0](https://github.com/groundsgg/library-scene/compare/v0.4.5...v0.5.0) (2026-11-14)
 
 
