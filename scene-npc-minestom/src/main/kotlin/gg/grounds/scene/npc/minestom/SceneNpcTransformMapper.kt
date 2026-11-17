@@ -1,8 +1,8 @@
 package gg.grounds.scene.npc.minestom
 
-import gg.grounds.npc.core.NpcTransform
-import gg.grounds.npc.core.NpcVector3
-import gg.grounds.npc.minestom.NpcRenderTransform
+import gg.grounds.npc.core.math.NpcTransform
+import gg.grounds.npc.core.math.NpcVector3
+import gg.grounds.npc.minestom.transform.NpcRenderTransform
 import gg.grounds.scene.format.Transform
 import gg.grounds.scene.format.Vec3
 import gg.grounds.scene.minestom.SceneRenderTransform

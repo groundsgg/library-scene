@@ -1,7 +1,7 @@
 package gg.grounds.scene.npc.minestom
 
-import gg.grounds.npc.minestom.NpcPresentationOptions
-import gg.grounds.npc.minestom.NpcPresentationStart
+import gg.grounds.npc.minestom.presentation.NpcPresentationOptions
+import gg.grounds.npc.minestom.presentation.NpcPresentationStart
 import gg.grounds.scene.minestom.RenderedAssetHandle
 
 /** Optional capability of a concrete, generation-bound NPC renderer handle. */

@@ -150,14 +150,12 @@ fails. `AsyncRenderedAssetHandle.closeAsync` joins active cleanup into the same
 drain; failed installation waits for rollback before returning its failure result.
 Existing factories and `SceneAssetRenderContext` constructors are unchanged.
 
-The adapter consumes `gg.grounds:npc-minestom:0.2.0` from
-`groundsgg/library-npc` on GitHub Packages. That library is independently built,
+The redesigned adapter targets `gg.grounds:npc-minestom:1.0.0` from
+`groundsgg/library-npc` on GitHub Packages. NPC is independently built,
 MIT-licensed and does not depend on Scene. Source builds for the adapter need
-the normal GitHub Packages read credentials; the NPC library itself does not.
-Scene `0.5.0` includes this adapter and the optional personal presentation capability.
-The adapter dependency is the published NPC `0.2.0` release. Licensed product
-content and actual backend/proxy transfer acceptance remain separate product gates.
-
+the normal GitHub Packages read credentials; NPC source builds themselves do not.
+Scene `0.5.0` remains the older adapter for NPC `0.2.0`. Rebuild the adapter and
+its consumers together when moving to the redesigned public API.
 
 The NPC adapter additionally implements the optional
 `PersonalNpcRenderedAssetHandle` capability. A host can call
@@ -167,12 +165,11 @@ cleanup; existing Scene SPI implementations gain no abstract methods. The NPC
 library supplies independent clip/head channels and participant-only one-shot
 sounds, while Scene retains the one logical actor, collider and trigger set.
 
-The default adapter dependency is the published NPC0.2.0 release. Review-only
-`npcVersion` / `npcRepository` overrides remain explicit local candidate tools;
-normal builds and CI require no candidate override. Neutral two-client private
-rendering, sound and common restoration have been confirmed on Grounds26.3.
-Licensed product content and actual backend/proxy transfers remain separate gates.
-
+Normal builds and CI use NPC `1.0.0`. For an explicit compatible local candidate,
+publish it to a local Maven repository and pass `-PnpcVersion=...` with
+`-PnpcRepository=file:///...`; the selected NPC repository is exclusive.
+Real-client rendering/audio, licensed product content and actual backend/proxy
+transfer acceptance remain separate host-integration gates.
 
 The independent release consumer is checked with Java 25 and Kotlin 2.4.0 using
 Maven artifacts, without a composite build. It exercises the Java presentation
