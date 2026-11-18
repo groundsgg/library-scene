@@ -174,3 +174,11 @@ transfer acceptance remain separate host-integration gates.
 The independent release consumer is checked with Java 25 and Kotlin 2.4.0 using
 Maven artifacts, without a composite build. It exercises the Java presentation
 API, scoped factory, private A/common B visibility, playback and owned cleanup.
+
+Shared NPC clips can opt into audible-gesture protection through
+`NpcRenderConfig.builder().protectSoundPlayback(true)`. The adapter implements
+`AnimationAdmissionRenderedAssetHandle`: Scene reserves every target before changing
+the logical animation clock, then releases all reservations after starting or veto.
+Queued NPC starts retain their reservation until the owning scheduler has processed
+them. Sound metadata may include `durationMillis` so a short animation cannot restart
+a still-audible cue. Unsounded looping idle remains available while a cue drains.

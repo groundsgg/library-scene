@@ -1,3 +1,5 @@
+CLASS gg.grounds.scene.minestom.AnimationAdmissionRenderedAssetHandle:- interfaces=gg.grounds.scene.minestom.RenderedAssetHandle
+CLASS gg.grounds.scene.minestom.AsyncRenderedAssetHandle:- interfaces=gg.grounds.scene.minestom.RenderedAssetHandle
 CLASS gg.grounds.scene.minestom.HeadLookRenderedAssetHandle:- interfaces=gg.grounds.scene.minestom.RenderedAssetHandle
 CLASS gg.grounds.scene.minestom.JavaRenderedAssetHandle:java.lang.Object interfaces=gg.grounds.scene.minestom.RenderedAssetHandle
 CLASS gg.grounds.scene.minestom.JavaSceneActionRegistry:java.lang.Object interfaces=gg.grounds.scene.minestom.SceneActionRegistry
@@ -11,6 +13,7 @@ CLASS gg.grounds.scene.minestom.SceneActionResult$Failure:java.lang.Object inter
 CLASS gg.grounds.scene.minestom.SceneActionResult$Rejected:java.lang.Object interfaces=gg.grounds.scene.minestom.SceneActionResult
 CLASS gg.grounds.scene.minestom.SceneActionResult$Success:java.lang.Object interfaces=gg.grounds.scene.minestom.SceneActionResult
 CLASS gg.grounds.scene.minestom.SceneActionResult:- interfaces=
+CLASS gg.grounds.scene.minestom.SceneAnimationAdmission:- interfaces=java.lang.AutoCloseable
 CLASS gg.grounds.scene.minestom.SceneAssetRenderContext:java.lang.Object interfaces=
 CLASS gg.grounds.scene.minestom.SceneAssetRendererFactory:- interfaces=
 CLASS gg.grounds.scene.minestom.SceneAssetRendererRegistry:- interfaces=
@@ -18,6 +21,7 @@ CLASS gg.grounds.scene.minestom.SceneClock:- interfaces=
 CLASS gg.grounds.scene.minestom.SceneEffectSink:- interfaces=
 CLASS gg.grounds.scene.minestom.ScenePlayerPolicy:- interfaces=
 CLASS gg.grounds.scene.minestom.SceneRenderTransform:java.lang.Object interfaces=
+CLASS gg.grounds.scene.minestom.SceneRendererLifetime:- interfaces=
 CLASS gg.grounds.scene.minestom.SceneRuntime:- interfaces=
 CLASS gg.grounds.scene.minestom.SceneRuntimeConfig:java.lang.Object interfaces=
 CLASS gg.grounds.scene.minestom.SceneRuntimeCreationResult$Failure:java.lang.Object interfaces=gg.grounds.scene.minestom.SceneRuntimeCreationResult
@@ -32,6 +36,7 @@ CLASS gg.grounds.scene.minestom.SceneRuntimeRequest:java.lang.Object interfaces=
 CLASS gg.grounds.scene.minestom.SceneViewerHighlightTransition:java.lang.Object interfaces=
 CLASS gg.grounds.scene.minestom.SceneViewerScaleTransition:java.lang.Object interfaces=
 CLASS gg.grounds.scene.minestom.SceneViewerVisualState:java.lang.Object interfaces=
+CLASS gg.grounds.scene.minestom.ScopedSceneAssetRendererFactory:- interfaces=gg.grounds.scene.minestom.SceneAssetRendererFactory
 CTOR gg.grounds.scene.minestom.JavaRenderedAssetHandle() throws=
 CTOR gg.grounds.scene.minestom.JavaSceneActionRegistry() throws=
 CTOR gg.grounds.scene.minestom.JavaSceneAssetRendererRegistry() throws=
@@ -66,6 +71,9 @@ FIELD gg.grounds.scene.minestom.SceneRuntimeProblemCode.MISSING_ACTION_HANDLER:g
 FIELD gg.grounds.scene.minestom.SceneRuntimeProblemCode.MISSING_EFFECT:gg.grounds.scene.minestom.SceneRuntimeProblemCode
 FIELD gg.grounds.scene.minestom.SceneRuntimeProblemCode.MISSING_RENDERER:gg.grounds.scene.minestom.SceneRuntimeProblemCode
 FIELD gg.grounds.scene.minestom.SceneRuntimeProblemCode.RUNTIME_FAILURE:gg.grounds.scene.minestom.SceneRuntimeProblemCode
+METHOD gg.grounds.scene.minestom.AnimationAdmissionRenderedAssetHandle.canStartAnimation(java.lang.String):boolean throws=
+METHOD gg.grounds.scene.minestom.AnimationAdmissionRenderedAssetHandle.reserveAnimation(java.lang.String):gg.grounds.scene.minestom.SceneAnimationAdmission throws=
+METHOD gg.grounds.scene.minestom.AsyncRenderedAssetHandle.closeAsync():java.util.concurrent.CompletionStage<java.lang.Void> throws=
 METHOD gg.grounds.scene.minestom.HeadLookRenderedAssetHandle.applyHeadLook(double,double):void throws=
 METHOD gg.grounds.scene.minestom.HeadLookRenderedAssetHandle.getHeadLookOrigin():gg.grounds.scene.format.Vec3 throws=
 METHOD gg.grounds.scene.minestom.JavaRenderedAssetHandle.startAnimation(java.lang.String,long):void throws=
@@ -132,6 +140,8 @@ METHOD gg.grounds.scene.minestom.SceneActionResult$Rejected.toString():java.lang
 METHOD gg.grounds.scene.minestom.SceneActionResult$Success.equals(java.lang.Object):boolean throws=
 METHOD gg.grounds.scene.minestom.SceneActionResult$Success.hashCode():int throws=
 METHOD gg.grounds.scene.minestom.SceneActionResult$Success.toString():java.lang.String throws=
+METHOD gg.grounds.scene.minestom.SceneAnimationAdmission.close():void throws=
+METHOD gg.grounds.scene.minestom.SceneAnimationAdmission.startAnimation(long):void throws=
 METHOD gg.grounds.scene.minestom.SceneAssetRenderContext.component1():net.minestom.server.instance.Instance throws=
 METHOD gg.grounds.scene.minestom.SceneAssetRenderContext.component2-52lPjcA():java.lang.String throws=
 METHOD gg.grounds.scene.minestom.SceneAssetRenderContext.component3-oHF-QXw():java.lang.String throws=
@@ -167,6 +177,11 @@ METHOD gg.grounds.scene.minestom.SceneRenderTransform.getLocal():gg.grounds.scen
 METHOD gg.grounds.scene.minestom.SceneRenderTransform.getRoot():gg.grounds.scene.format.Transform throws=
 METHOD gg.grounds.scene.minestom.SceneRenderTransform.hashCode():int throws=
 METHOD gg.grounds.scene.minestom.SceneRenderTransform.toString():java.lang.String throws=
+METHOD gg.grounds.scene.minestom.SceneRendererLifetime.isCurrent():boolean throws=
+METHOD gg.grounds.scene.minestom.SceneRendererLifetime.onInvalidated(java.lang.Runnable):java.lang.AutoCloseable throws=
+METHOD gg.grounds.scene.minestom.SceneRendererLifetime.reportFailure(java.lang.Throwable):void throws=
+METHOD gg.grounds.scene.minestom.SceneRendererLifetime.runIfCurrent(java.lang.Runnable):boolean throws=
+METHOD gg.grounds.scene.minestom.SceneRendererLifetime.trackCleanup(java.util.concurrent.CompletionStage<java.lang.Void>):void throws=
 METHOD gg.grounds.scene.minestom.SceneRuntime.close():java.util.concurrent.CompletionStage<java.lang.Void> throws=
 METHOD gg.grounds.scene.minestom.SceneRuntime.getIdentity():gg.grounds.scene.minestom.SceneRuntimeIdentity throws=
 METHOD gg.grounds.scene.minestom.SceneRuntime.isClosed():boolean throws=
@@ -302,13 +317,4 @@ METHOD gg.grounds.scene.minestom.SceneViewerVisualState.getScaleMultiplier():dou
 METHOD gg.grounds.scene.minestom.SceneViewerVisualState.getScaleTransition():gg.grounds.scene.minestom.SceneViewerScaleTransition throws=
 METHOD gg.grounds.scene.minestom.SceneViewerVisualState.hashCode():int throws=
 METHOD gg.grounds.scene.minestom.SceneViewerVisualState.toString():java.lang.String throws=
-CLASS gg.grounds.scene.minestom.AsyncRenderedAssetHandle:- interfaces=gg.grounds.scene.minestom.RenderedAssetHandle
-METHOD gg.grounds.scene.minestom.AsyncRenderedAssetHandle.closeAsync():java.util.concurrent.CompletionStage<java.lang.Void> throws=
-CLASS gg.grounds.scene.minestom.ScopedSceneAssetRendererFactory:- interfaces=gg.grounds.scene.minestom.SceneAssetRendererFactory
 METHOD gg.grounds.scene.minestom.ScopedSceneAssetRendererFactory.createScoped(gg.grounds.scene.minestom.SceneAssetRenderContext,gg.grounds.scene.minestom.SceneRendererLifetime):java.util.concurrent.CompletionStage<gg.grounds.scene.minestom.RenderedAssetHandle> throws=
-CLASS gg.grounds.scene.minestom.SceneRendererLifetime:- interfaces=
-METHOD gg.grounds.scene.minestom.SceneRendererLifetime.isCurrent():boolean throws=
-METHOD gg.grounds.scene.minestom.SceneRendererLifetime.runIfCurrent(java.lang.Runnable):boolean throws=
-METHOD gg.grounds.scene.minestom.SceneRendererLifetime.onInvalidated(java.lang.Runnable):java.lang.AutoCloseable throws=
-METHOD gg.grounds.scene.minestom.SceneRendererLifetime.reportFailure(java.lang.Throwable):void throws=
-METHOD gg.grounds.scene.minestom.SceneRendererLifetime.trackCleanup(java.util.concurrent.CompletionStage<java.lang.Void>):void throws=
