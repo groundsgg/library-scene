@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/groundsgg/library-scene/compare/v1.0.0...v1.0.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* preserve atomic NPC animation admission ([4f96d9c](https://github.com/groundsgg/library-scene/commit/4f96d9c8eeaa14994f7827d6d5ae3b5eb29f2260))
+
 ## [1.0.0](https://github.com/groundsgg/library-scene/compare/v0.5.0...v1.0.0) (2026-11-17)
 
 
