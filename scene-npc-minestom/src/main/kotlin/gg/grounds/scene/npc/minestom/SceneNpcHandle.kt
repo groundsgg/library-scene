@@ -23,7 +23,11 @@ internal class SceneNpcHandle(
     private val lifetime: SceneRendererLifetime,
     private val registration: AutoCloseable,
     private val instance: Instance,
-) : HeadLookRenderedAssetHandle, AsyncRenderedAssetHandle, PersonalNpcRenderedAssetHandle {
+) :
+    HeadLookRenderedAssetHandle,
+    AsyncRenderedAssetHandle,
+    PersonalNpcRenderedAssetHandle,
+    AnimationAdmissionRenderedAssetHandle {
     override fun preparePresentation(options: NpcPresentationOptions): NpcPresentationStart {
         if (!lifetime.isCurrent())
             return object : NpcPresentationStart {
@@ -71,6 +75,21 @@ internal class SceneNpcHandle(
 
     override fun clearViewerState(player: Player) {
         observe(npc.clearViewerState(player))
+    }
+
+    override fun canStartAnimation(animation: String): Boolean =
+        lifetime.isCurrent() && animation in model.animations && npc.canStartClip(animation)
+
+    override fun reserveAnimation(animation: String): SceneAnimationAdmission? {
+        if (!lifetime.isCurrent() || animation !in model.animations) return null
+        val lease = npc.reserveClip(animation) ?: return null
+        return object : SceneAnimationAdmission {
+            override fun startAnimation(elapsedMillis: Long) {
+                observe(lease.start(elapsedMillis))
+            }
+
+            override fun close() = lease.close()
+        }
     }
 
     override fun startAnimation(animation: LocalId, elapsedMillis: Long) {

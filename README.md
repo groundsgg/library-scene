@@ -150,7 +150,7 @@ fails. `AsyncRenderedAssetHandle.closeAsync` joins active cleanup into the same
 drain; failed installation waits for rollback before returning its failure result.
 Existing factories and `SceneAssetRenderContext` constructors are unchanged.
 
-The redesigned adapter targets `gg.grounds:npc-minestom:1.0.0` from
+The redesigned adapter targets `gg.grounds:npc-minestom:2.0.0` from
 `groundsgg/library-npc` on GitHub Packages. NPC is independently built,
 MIT-licensed and does not depend on Scene. Source builds for the adapter need
 the normal GitHub Packages read credentials; NPC source builds themselves do not.
@@ -165,7 +165,7 @@ cleanup; existing Scene SPI implementations gain no abstract methods. The NPC
 library supplies independent clip/head channels and participant-only one-shot
 sounds, while Scene retains the one logical actor, collider and trigger set.
 
-Normal builds and CI use NPC `1.0.0`. For an explicit compatible local candidate,
+Normal builds and CI use NPC `2.0.0`. For an explicit compatible local candidate,
 publish it to a local Maven repository and pass `-PnpcVersion=...` with
 `-PnpcRepository=file:///...`; the selected NPC repository is exclusive.
 Real-client rendering/audio, licensed product content and actual backend/proxy
@@ -174,3 +174,11 @@ transfer acceptance remain separate host-integration gates.
 The independent release consumer is checked with Java 25 and Kotlin 2.4.0 using
 Maven artifacts, without a composite build. It exercises the Java presentation
 API, scoped factory, private A/common B visibility, playback and owned cleanup.
+
+Shared NPC clips can opt into audible-gesture protection through
+`NpcRenderConfig.builder().protectSoundPlayback(true)`. The adapter implements
+`AnimationAdmissionRenderedAssetHandle`: Scene reserves every target before changing
+the logical animation clock, then releases all reservations after starting or veto.
+Queued NPC starts retain their reservation until the owning scheduler has processed
+them. Sound metadata may include `durationMillis` so a short animation cannot restart
+a still-audible cue. Unsounded looping idle remains available while a cue drains.

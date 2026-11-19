@@ -1,6 +1,6 @@
 dependencies {
     api(project(":scene-minestom"))
-    api("gg.grounds:npc-minestom:${providers.gradleProperty("npcVersion").orElse("1.0.0").get()}")
+    api("gg.grounds:npc-minestom:${providers.gradleProperty("npcVersion").orElse("2.0.0").get()}")
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
 }

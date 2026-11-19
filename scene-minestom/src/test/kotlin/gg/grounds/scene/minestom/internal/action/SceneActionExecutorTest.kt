@@ -25,6 +25,98 @@ import net.minestom.server.network.player.PlayerConnection
 
 class SceneActionExecutorTest {
     @Test
+    fun `animation reservations are cancelled on later veto and all are released after starts or close failure`() {
+        for (mode in listOf("veto", "success", "close-failure", "reserve-failure")) {
+            val instance = instance()
+            val player = player(instance)
+            val element = state(composite("reserved"))
+            element.setAnimation(null, LogicalAnimationState(LocalId("idle"), 5L))
+            val first = ReservedHandle()
+            val second =
+                ReservedHandle(mode == "veto", mode == "close-failure", mode == "reserve-failure")
+            val outcome =
+                executor(
+                        instance,
+                        player,
+                        mapOf(element.element.id to element),
+                        mapOf(
+                            element.element.id to
+                                ActiveElement(
+                                    element.element.id,
+                                    element.generation,
+                                    listOf(first, second),
+                                    null,
+                                    null,
+                                    emptyList(),
+                                    listOf(LocalId("a"), LocalId("b")),
+                                )
+                        ),
+                    )
+                    .execute(
+                        chain(player, StartAnimationAction(target("reserved"), LocalId("hello")))
+                    )
+                    .await()
+            assertFalse(first.held, mode)
+            assertFalse(second.held, mode)
+            assertEquals(1, first.released, mode)
+            if (mode == "veto" || mode == "reserve-failure") {
+                assertEquals(
+                    if (mode == "veto") ChainOutcome.REJECTED else ChainOutcome.FAILED,
+                    outcome,
+                )
+                assertEquals(LogicalAnimationState(LocalId("idle"), 5L), element.animation)
+                assertTrue(first.started.isEmpty())
+                assertTrue(second.started.isEmpty())
+            } else {
+                assertEquals(
+                    if (mode == "success") ChainOutcome.SUCCEEDED else ChainOutcome.FAILED,
+                    outcome,
+                )
+                assertEquals(listOf(LocalId("hello") to 0L), first.started)
+                assertEquals(listOf(LocalId("hello") to 0L), second.started)
+            }
+        }
+    }
+
+    @Test
+    fun `busy renderer rejects animation before changing logical clock or starting other parts`() {
+        val instance = instance()
+        val player = player(instance)
+        val element = state(composite("composite"))
+        element.setAnimation(null, LogicalAnimationState(LocalId("idle"), 5L))
+        val first = RecordingHandle()
+        val busy =
+            object : RecordingHandle(), AnimationAdmissionRenderedAssetHandle {
+                override fun canStartAnimation(animation: String) = false
+
+                override fun reserveAnimation(animation: String): SceneAnimationAdmission? = null
+            }
+        val outcome =
+            executor(
+                    instance,
+                    player,
+                    mapOf(element.element.id to element),
+                    mapOf(
+                        element.element.id to
+                            ActiveElement(
+                                element.element.id,
+                                element.generation,
+                                listOf(first, busy),
+                                null,
+                                null,
+                                emptyList(),
+                                listOf(LocalId("a"), LocalId("b")),
+                            )
+                    ),
+                )
+                .execute(chain(player, StartAnimationAction(target("composite"), LocalId("hello"))))
+        assertEquals(ChainOutcome.REJECTED, outcome.await())
+        assertEquals(LogicalAnimationState(LocalId("idle"), 5L), element.animation)
+        assertTrue(first.started.isEmpty())
+        assertTrue(busy.started.isEmpty())
+    }
+
+    @Test
     fun `animation updates logical state before optional active handles including inactive targets`() {
         val instance = instance()
         val player = player(instance)
@@ -1027,7 +1119,39 @@ class SceneActionExecutorTest {
         override fun getRemoteAddress(): SocketAddress = InetSocketAddress(0)
     }
 
-    private class RecordingHandle : RenderedAssetHandle {
+    private class ReservedHandle(
+        private val busy: Boolean = false,
+        private val closeFailure: Boolean = false,
+        private val reserveFailure: Boolean = false,
+    ) : RecordingHandle(), AnimationAdmissionRenderedAssetHandle {
+        var held = false
+        var released = 0
+
+        override fun canStartAnimation(animation: String) = !busy && !held
+
+        override fun startAnimation(animation: LocalId, elapsedMillis: Long) =
+            error("Start must use reservation")
+
+        override fun reserveAnimation(animation: String): SceneAnimationAdmission? {
+            if (reserveFailure) error("Reservation failed")
+            if (!canStartAnimation(animation)) return null
+            held = true
+            return object : SceneAnimationAdmission {
+                override fun startAnimation(elapsedMillis: Long) {
+                    check(held)
+                    started += LocalId(animation) to elapsedMillis
+                }
+
+                override fun close() {
+                    held = false
+                    released++
+                    if (closeFailure) error("Close failed")
+                }
+            }
+        }
+    }
+
+    private open class RecordingHandle : RenderedAssetHandle {
         val started = mutableListOf<Pair<LocalId, Long>>()
         val stopped = mutableListOf<LocalId?>()
         val viewerUpdates = mutableListOf<Pair<UUID, SceneViewerVisualState>>()

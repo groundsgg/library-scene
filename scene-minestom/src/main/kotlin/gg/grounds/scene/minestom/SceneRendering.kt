@@ -74,6 +74,22 @@ interface RenderedAssetHandle : AutoCloseable {
     override fun close()
 }
 
+/** Optional action-time veto, checked before Scene changes the shared animation clock. */
+interface AnimationAdmissionRenderedAssetHandle : RenderedAssetHandle {
+    /** Side-effect-free advisory check; use reserveAnimation for an atomic admitted start. */
+    fun canStartAnimation(animation: String): Boolean
+
+    /** Reserves a start until closed; no visual/audio effect before the lease is started. */
+    fun reserveAnimation(animation: String): SceneAnimationAdmission?
+}
+
+/** A single-use admitted start. Callers must close on success, veto, and failure. */
+interface SceneAnimationAdmission : AutoCloseable {
+    fun startAnimation(elapsedMillis: Long)
+
+    override fun close()
+}
+
 /** Optional skeletal look capability; angles use Scene coordinates (+yaw east, -pitch up). */
 interface HeadLookRenderedAssetHandle : RenderedAssetHandle {
     /** Local Scene-space eye/aim point; null when this asset has no head bone. */

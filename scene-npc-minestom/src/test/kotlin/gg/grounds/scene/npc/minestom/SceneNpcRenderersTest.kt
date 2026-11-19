@@ -63,6 +63,14 @@ class SceneNpcRenderersTest {
             Thread.yield()
         }
         val handle = assertIs<AsyncRenderedAssetHandle>(created.get(1, TimeUnit.SECONDS))
+        val admission = assertIs<AnimationAdmissionRenderedAssetHandle>(handle)
+        val lease = assertNotNull(admission.reserveAnimation("idle"))
+        assertNull(admission.reserveAnimation("idle"))
+        lease.startAnimation(0)
+        lease.close()
+        assertNull(admission.reserveAnimation("idle"))
+        repeat(4) { instance.tick(0) }
+        assertNotNull(admission.reserveAnimation("idle")).close()
         assertEquals(1, scope.cleanups.size)
         assertFalse(scope.cleanups.single().toCompletableFuture().isDone)
         assertEquals(1, instance.entities.count { it.entityType == EntityType.ITEM_DISPLAY })

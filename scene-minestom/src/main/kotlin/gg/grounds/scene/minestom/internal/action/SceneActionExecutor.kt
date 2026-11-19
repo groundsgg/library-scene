@@ -275,11 +275,42 @@ internal class SceneActionExecutor(
         when (action) {
             is StartAnimationAction -> {
                 val target = requireTarget(action.target)
-                target.state.setAnimation(
-                    target.partId,
-                    LogicalAnimationState(action.animation, clock.nanoTime()),
-                )
-                target.activeHandles.forEach { it.startAnimation(action.animation, 0) }
+                val starters = mutableListOf<Pair<RenderedAssetHandle, SceneAnimationAdmission?>>()
+                var failure: Throwable? = null
+                try {
+                    for (handle in target.activeHandles) {
+                        val admission =
+                            if (handle is AnimationAdmissionRenderedAssetHandle)
+                                handle.reserveAnimation(action.animation.value)
+                                    ?: return ChainOutcome.REJECTED
+                            else null
+                        starters += handle to admission
+                    }
+                    target.state.setAnimation(
+                        target.partId,
+                        LogicalAnimationState(action.animation, clock.nanoTime()),
+                    )
+                    starters.forEach { (handle, admission) ->
+                        if (admission != null) admission.startAnimation(0)
+                        else handle.startAnimation(action.animation, 0)
+                    }
+                } catch (error: Throwable) {
+                    failure = error
+                    throw error
+                } finally {
+                    var closeFailure: Throwable? = null
+                    for ((_, admission) in starters.asReversed()) {
+                        try {
+                            admission?.close()
+                        } catch (error: Throwable) {
+                            val primary = failure ?: closeFailure
+                            if (primary != null) {
+                                if (primary !== error) primary.addSuppressed(error)
+                            } else closeFailure = error
+                        }
+                    }
+                    if (failure == null) closeFailure?.let { throw it }
+                }
             }
             is StopAnimationAction -> {
                 val target = requireTarget(action.target)
