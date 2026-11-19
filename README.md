@@ -150,7 +150,7 @@ fails. `AsyncRenderedAssetHandle.closeAsync` joins active cleanup into the same
 drain; failed installation waits for rollback before returning its failure result.
 Existing factories and `SceneAssetRenderContext` constructors are unchanged.
 
-The redesigned adapter targets `gg.grounds:npc-minestom:1.0.0` from
+The redesigned adapter targets `gg.grounds:npc-minestom:2.0.0` from
 `groundsgg/library-npc` on GitHub Packages. NPC is independently built,
 MIT-licensed and does not depend on Scene. Source builds for the adapter need
 the normal GitHub Packages read credentials; NPC source builds themselves do not.
@@ -165,7 +165,7 @@ cleanup; existing Scene SPI implementations gain no abstract methods. The NPC
 library supplies independent clip/head channels and participant-only one-shot
 sounds, while Scene retains the one logical actor, collider and trigger set.
 
-Normal builds and CI use NPC `1.0.0`. For an explicit compatible local candidate,
+Normal builds and CI use NPC `2.0.0`. For an explicit compatible local candidate,
 publish it to a local Maven repository and pass `-PnpcVersion=...` with
 `-PnpcRepository=file:///...`; the selected NPC repository is exclusive.
 Real-client rendering/audio, licensed product content and actual backend/proxy
